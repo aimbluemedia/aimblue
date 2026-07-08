@@ -1,19 +1,31 @@
-# OS files
+# DB credentials — never commit
+db.config.php
+
+# Debug/diagnostic files — delete from server after use
+debug.php
+debug2.php
+fix.php
+opcache-reset.php
+recover.php
+rendered-check.php
+loader-check.php
+rendered.php
+jscheck.php
+btntest.php
+apitest.php
+
+# Environment / secrets
+.env
+.env.*
+
+# OS
 .DS_Store
 Thumbs.db
 
 # Editors
 .vscode/
 .idea/
-
-# Environment / secrets — never commit credentials
-.env
-.env.*
-*.local
-
-# Node (if a build step is added later)
-node_modules/
-dist/
+*.swp
 
 # Logs
 *.log

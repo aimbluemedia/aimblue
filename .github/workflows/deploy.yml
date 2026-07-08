@@ -24,10 +24,12 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftps
-          # What to upload: the site lives in public/
+          # What to upload: the app lives in public/
           local-dir: ./public/
           # Where it lands on Hostinger. If your FTP account already points
           # directly at public_html, change this to: ./
           server-dir: ./public_html/
-          # Safety: never let a deploy wipe files it didn't create
+          # Safety: never let a deploy wipe files it didn't create.
+          # db.config.php (generated on the server) is never touched because
+          # this action only manages files it uploaded itself.
           dangerous-clean-slate: false

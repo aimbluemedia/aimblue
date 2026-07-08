@@ -8,9 +8,14 @@ uses Hostinger's built-in Git feature and needs no secrets, but has limitations.
 
 ## Option A (recommended): GitHub Actions auto-deploy via FTP
 
-Every push to the `main` branch automatically uploads `public/` to your
-Hostinger web space. The workflow is already in `.github/workflows/deploy.yml` —
-you just need to give GitHub your Hostinger FTP credentials as **secrets**.
+Every push to the `main` branch automatically uploads `public/` (the Content
+Board app) to your Hostinger web space. The workflow is already in
+`.github/workflows/deploy.yml` — you just need to give GitHub your Hostinger
+FTP credentials as **secrets**.
+
+Only `public/` is deployed. The `setup/` admin tools and `database/` SQL files
+never go to the webroot automatically — see the README for the one-time
+database and admin-password steps.
 
 ### Step 1 — Get your FTP credentials from Hostinger
 
@@ -65,9 +70,12 @@ Hostinger can pull the repo itself, no FTP secrets needed:
    **Settings → Deploy keys**, and a **webhook URL** to add under
    **Settings → Webhooks** so pushes deploy automatically.
 
-**Limitation:** this deploys the *whole repo* (README, docs, etc.) into your
-web root, not just `public/`. That's why Option A is recommended for this
-project layout.
+**Limitation — important for this project:** hPanel Git deploys the *whole
+repo* into your web root, not just `public/`. That would expose the `setup/`
+admin tools (which have no login protection) and the `database/` SQL files to
+the public internet. **Use Option A for this project**, or if you must use
+Option B, delete `setup/` and `database/` from the webroot immediately after
+every deploy.
 
 ---
 
