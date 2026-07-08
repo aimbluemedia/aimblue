@@ -1196,8 +1196,6 @@ window.openEditCompanyModal = function openEditCompanyModal(id){
     const sel = document.getElementById('coTableSel');
     sel.innerHTML = '<option value="'+co.tableId+'" data-name="'+esc(co.tableName||co.tableId)+'" selected>'+esc(co.tableName||co.tableId)+'</option>';
   }
-  const cms = (db.people||[]).filter(function(p){ return p.role==='content_manager'; });
-  const sps = (db.people||[]).filter(function(p){ return p.role==='sales_person'; });
   var cmSelE = document.getElementById('coContentManager');
   var spSelE = document.getElementById('coSalesPerson');
   function fillCMSP(people) {
@@ -1205,13 +1203,15 @@ window.openEditCompanyModal = function openEditCompanyModal(id){
     var spsE = people.filter(function(p){ return p.role==='sales_person'; });
     cmSelE.innerHTML = '<option value="">— Select —</option>' + cmsE.map(function(p){ return '<option value="'+p.id+'"'+(p.id===co.contentManagerId||p.id===co.content_manager_id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
     spSelE.innerHTML = '<option value="">— Select —</option>' + spsE.map(function(p){ return '<option value="'+p.id+'"'+(p.id===co.salesPersonId||p.id===co.sales_person_id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
+    // (was cmSel/spSel — undefined here; the typo aborted this whole
+    // function whenever no CMs or SPs existed yet)
+    if(!cmsE.length) cmSelE.innerHTML += '<option value="" disabled style="color:#94a3b8">No content managers added yet</option>';
+    if(!spsE.length) spSelE.innerHTML += '<option value="" disabled style="color:#94a3b8">No sales people added yet</option>';
   }
+  fillCMSP(db.people||[]);
   apiCall('people').then(function(fresh){
-    if(fresh && fresh.length){ db.people=fresh; save(); }
-    fillCMSP(db.people||[]);
-  }).catch(function(){ fillCMSP(db.people||[]); });
-  if(!cms.length) cmSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No content managers added yet</option>';
-  if(!sps.length) spSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No sales people added yet</option>';
+    if(fresh && fresh.length){ db.people = fresh.map(normalizePerson); save(); fillCMSP(db.people); }
+  }).catch(function(){ /* selects already filled from local data above */ });
   document.getElementById('coMonthlyPosts').value = co.monthlyPosts != null ? co.monthlyPosts : '';
   document.getElementById('coFee').value = co.fee != null ? co.fee : '';
   document.getElementById('coPaymentDate').value = co.paymentDate != null ? co.paymentDate : '';
@@ -1220,6 +1220,7 @@ window.openEditCompanyModal = function openEditCompanyModal(id){
   document.getElementById('coFeeSM').value = co.feeSM != null ? co.feeSM : 20;
   updateFeeDistribution();
   buildPostingDays(co.postingDays || []);
+  buildPlatformConfig(co.platform_config || {});
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mAddCo')).show();
 };
 
@@ -1914,6 +1915,71 @@ function buildPostingDays(selectedDays){
   }).join('');
 }
 
+// ── Per-platform posting schedule (companies.platform_config) ──
+// Renders one row per platform in the Add/Edit Company modal: 7 day
+// checkboxes + a social-login selector. Format saved to the DB:
+// {"facebook":{"days":["Mon","Wed"],"social_login_id":"sl_x"}, ...}
+function buildPlatformConfig(cfg){
+  var wrap = document.getElementById('platformConfigWrap');
+  if(!wrap) return;
+  cfg = (cfg && typeof cfg === 'object') ? cfg : {};
+  wrap.innerHTML = POSTING_PLATFORMS.map(function(pl){
+    var pc   = cfg[pl.key] || {};
+    var days = Array.isArray(pc.days) ? pc.days : [];
+    var curLogin = pc.social_login_id || '';
+    return '<div class="pcfg-row" data-platform="'+pl.key+'" style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap">'+
+      '<div style="width:105px;flex-shrink:0;font-size:12px;font-weight:600;color:#0f172a"><i class="bi '+pl.icon+' me-1" style="color:'+pl.color+'"></i>'+pl.label+'</div>'+
+      '<div style="display:flex;gap:6px">'+DAYS_OF_WEEK.map(function(day){
+        return '<label style="display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;font-size:9px;color:#64748b">'+
+          '<input type="checkbox" class="pcfg-day form-check-input" value="'+day+'" '+(days.indexOf(day)>-1?'checked':'')+' style="margin:0">'+
+          '<span>'+day.slice(0,2)+'</span></label>';
+      }).join('')+'</div>'+
+      // The current login id is embedded as a selected option right away, so
+      // the selection survives even if the social_logins request fails.
+      '<select class="form-select form-select-sm pcfg-login" style="max-width:190px;font-size:12px;margin-left:auto">'+
+        '<option value="">— No login linked —</option>'+
+        (curLogin ? '<option value="'+esc(curLogin)+'" selected>(current login)</option>' : '')+
+      '</select>'+
+    '</div>';
+  }).join('');
+  apiCall('social_logins').then(function(logins){
+    (logins||[]).forEach(function(sl){
+      var row = wrap.querySelector('.pcfg-row[data-platform="'+sl.platform+'"]');
+      var sel = row && row.querySelector('.pcfg-login');
+      if(!sel) return;
+      var cur = sel.value;
+      var placeholder = sel.querySelector('option[value="'+sl.id+'"]');
+      if(placeholder) placeholder.remove();
+      var opt = document.createElement('option');
+      opt.value = sl.id;
+      opt.textContent = sl.title + (sl.username ? ' ('+sl.username+')' : '');
+      if(sl.id === cur) opt.selected = true;
+      sel.appendChild(opt);
+      if(cur && sel.value !== cur) sel.value = cur;
+    });
+  }).catch(function(e){ console.error('Could not load social logins for platform config:', e); });
+}
+
+function getPlatformConfig(){
+  var wrap = document.getElementById('platformConfigWrap');
+  if(!wrap || !wrap.querySelector('.pcfg-row')){
+    // UI not built (shouldn't happen) — preserve what the company already
+    // has instead of wiping platform_config on save.
+    var co = _editCoId ? db.companies.find(function(c){ return c.id===_editCoId; }) : null;
+    return (co && co.platform_config && typeof co.platform_config === 'object') ? co.platform_config : {};
+  }
+  var cfg = {};
+  wrap.querySelectorAll('.pcfg-row').forEach(function(row){
+    var days = [].slice.call(row.querySelectorAll('.pcfg-day:checked')).map(function(c){ return c.value; });
+    var sel  = row.querySelector('.pcfg-login');
+    var loginId = sel ? sel.value : '';
+    if(days.length || loginId){
+      cfg[row.dataset.platform] = { days: days, social_login_id: loginId || null };
+    }
+  });
+  return cfg;
+}
+
 function updateFeeDistribution(){
   var fee = parseFloat(document.getElementById('coFee')?.value)||0;
   var sp  = parseFloat(document.getElementById('coFeeSP')?.value)||0;
@@ -1987,6 +2053,7 @@ function openAddCompanyModal(){
   document.getElementById('coFeeSM').value='20';
   updateFeeDistribution();
   buildPostingDays([]);
+  buildPlatformConfig({});
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mAddCo')).show();
 }
 
@@ -1994,26 +2061,28 @@ document.getElementById('btnSaveCo').onclick=async function(){
   const name = document.getElementById('coName').value.trim();
   if(!name){ showAddCoErr('Company name is required.'); return; }
 
-  const body = {
-    name:               name,
-    color:              _selectedColor,
-    content_manager_id: document.getElementById('coContentManager').value || null,
-    sales_person_id:    document.getElementById('coSalesPerson').value    || null,
-    monthly_posts:      document.getElementById('coMonthlyPosts').value   ? parseInt(document.getElementById('coMonthlyPosts').value)   : null,
-    fee:                document.getElementById('coFee').value            ? parseFloat(document.getElementById('coFee').value)         : null,
-    payment_date:       document.getElementById('coPaymentDate').value    ? parseInt(document.getElementById('coPaymentDate').value)    : null,
-    fee_sp_pct:         parseFloat(document.getElementById('coFeeSP').value) || 40,
-    fee_cm_pct:         parseFloat(document.getElementById('coFeeCM').value) || 40,
-    fee_sm_pct:         parseFloat(document.getElementById('coFeeSM').value) || 20,
-    posting_days:       getPostingDays(),
-    platform_config:    getPlatformConfig(),
-  };
-
   const btn = document.getElementById('btnSaveCo');
   btn.disabled = true;
-  showAddCoErr && document.getElementById('addCoErr').classList.add('d-none');
+  document.getElementById('addCoErr').classList.add('d-none');
 
+  // Everything lives inside the try — an error while COLLECTING the form
+  // (not just while saving) must surface in the modal, not vanish.
   try {
+    const body = {
+      name:               name,
+      color:              _selectedColor,
+      content_manager_id: document.getElementById('coContentManager').value || null,
+      sales_person_id:    document.getElementById('coSalesPerson').value    || null,
+      monthly_posts:      document.getElementById('coMonthlyPosts').value   ? parseInt(document.getElementById('coMonthlyPosts').value)   : null,
+      fee:                document.getElementById('coFee').value            ? parseFloat(document.getElementById('coFee').value)         : null,
+      payment_date:       document.getElementById('coPaymentDate').value    ? parseInt(document.getElementById('coPaymentDate').value)    : null,
+      fee_sp_pct:         parseFloat(document.getElementById('coFeeSP').value) || 40,
+      fee_cm_pct:         parseFloat(document.getElementById('coFeeCM').value) || 40,
+      fee_sm_pct:         parseFloat(document.getElementById('coFeeSM').value) || 20,
+      posting_days:       getPostingDays(),
+      platform_config:    getPlatformConfig(),
+    };
+
     const coId = _editCoId || uid();
     await apiCall('save_company', { method:'POST', body: Object.assign({id: coId}, body) });
 
@@ -2039,6 +2108,7 @@ document.getElementById('btnSaveCo').onclick=async function(){
       fee_sm_pct:       body.fee_sm_pct,
       postingDays:      body.posting_days,
       posting_days:     body.posting_days,
+      platform_config:  body.platform_config,
     };
 
     if (_editCoId) {
