@@ -44,8 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $test_error = null;
     try {
         new PDO("mysql:host={$host};dbname={$name};charset=utf8mb4", $user, $pass);
-    } catch (PDOException $e) {
-        $test_error = $e->getMessage();
+    } catch (Throwable $e) {
+        $test_error = 'Could not connect: ' . $e->getMessage();
     }
 
     if (!$test_error) {
@@ -54,9 +54,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             "define('DB_NAME', " . var_export($name, true) . ");\n" .
             "define('DB_USER', " . var_export($user, true) . ");\n" .
             "define('DB_PASS', " . var_export($pass, true) . ");\n";
-        file_put_contents(CONFIG_FILE, $cfg);
-        header('Location: index.php');
-        exit;
+        // file_put_contents failure was silent before — the wizard looped
+        // back to an empty form with no explanation.
+        if (@file_put_contents(CONFIG_FILE, $cfg) === false
+            || @file_get_contents(CONFIG_FILE) !== $cfg) {
+            $test_error = 'Connection OK, but the settings file could not be written. '
+                . 'Check that the web server may write to ' . htmlspecialchars(dirname(CONFIG_FILE))
+                . ' (folder permissions should be 755 and owned by your hosting account).';
+        } else {
+            header('Location: index.php');
+            exit;
+        }
     }
 }
 
