@@ -13,34 +13,34 @@ error banners instead of silent catches, and a DOMContentLoaded guard.
 Verified end-to-end in Chromium against a real MySQL database.
 
 ## Repo Layout
+The app lives at the REPO ROOT so Hostinger's hPanel Git deployment (which
+clones the whole repo into public_html) works with no restructuring. The
+root `.htaccess` blocks web access to every non-app path — never delete it.
 ```
-public/                      Deployed to Hostinger public_html on every push to main
-  index.php                  Main dashboard (single-page app — all UI + JS)
-  api.php                    REST JSON API — all DB reads/writes
-  auth.php                   Session helpers
-  config.php                 DB config wizard + db_connect()
-  login.php                  Login page
+index.php                    Main dashboard (single-page app — all UI + JS)
+api.php                      REST JSON API — all DB reads/writes
+auth.php                     Session helpers
+config.php                   DB config wizard + db_connect()
+login.php                    Login page
+.htaccess                    Webroot guard — blocks setup/, database/, docs/, SQL, git internals
 
-setup/                       NEVER auto-deployed — upload manually once, then DELETE from server
-  setadmin.php               One-time admin setup
-  reset-password.php         One-time password reset tool
+setup/                       Blocked by .htaccess; excluded from FTP deploys.
+  setadmin.php               One-time admin setup — copy next to index.php, run, DELETE
+  reset-password.php         One-time password reset tool — same drill
 
-database/                    SQL — run in phpMyAdmin, never uploaded to webroot
+database/                    SQL — run in phpMyAdmin (blocked from web access)
   content-board-mysql.sql    Full schema + sample data (safe to re-run)
   migration-dual-roles.sql   Adds cm_person_id / sp_person_id to users
   migration-social-logins.sql  Creates social_logins tables
   migration-platform-config.sql  Adds platform_config JSON column to companies
   fix-fk-constraints.sql     Drops FK constraints on companies (run this!)
 
-legacy/                      Original Claude artifact prototype (reference only)
-.github/workflows/deploy.yml Auto-deploy public/ → Hostinger via FTPS
-docs/SETUP-HOSTINGER.md      One-time GitHub↔Hostinger connection guide
+legacy/                      Original Claude artifact prototype (blocked from web access)
+.github/workflows/deploy.yml Alternative FTPS auto-deploy (push to main)
+docs/SETUP-HOSTINGER.md      GitHub↔Hostinger connection guide
 
 db.config.php                Generated on the server by config.php (gitignored)
 ```
-On the server everything is flat inside `public_html/` — the contents of
-`public/` deploy to the webroot, so `require __DIR__.'/config.php'` style
-includes keep working.
 
 ## Database Schema
 ```sql
@@ -164,17 +164,17 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 - PHP 8.3 on Hostinger shared hosting
 - MySQL — database: u312278121_wpi
 - No SSH, no Composer, no npm
-- Deploys: push to `main` on GitHub → GitHub Actions uploads `public/` to
-  `public_html/` via FTPS (see .github/workflows/deploy.yml). Manual FTP /
-  File Manager still works for one-offs (e.g. the setup/ tools).
+- Deploys: Hostinger hPanel Git deployment clones the repo straight into
+  `public_html/` (the layout is designed for this — see .htaccess). The
+  GitHub Actions FTPS workflow (push to `main`) is an alternative path.
 - OpCache enabled (run opcache-reset.php after deploys, then delete it)
 
 ## Running Locally
 1. PHP 8.x + MySQL
-2. Point web server at `public/` (or run `php -S localhost:8000` inside it)
+2. Point web server at the repo root (or run `php -S localhost:8000` in it)
 3. Visit config.php → enter DB credentials
 4. Import database/content-board-mysql.sql
 5. Run all database/migration-*.sql files
 6. Run database/fix-fk-constraints.sql
-7. Copy setup/setadmin.php next to the app, visit it → sets admin password, then delete it
+7. Copy setup/setadmin.php next to index.php, visit it → sets admin password, then delete it
 8. Login at login.php (default: admin / Admin2026)

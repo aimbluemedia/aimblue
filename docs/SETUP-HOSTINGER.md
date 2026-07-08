@@ -1,88 +1,78 @@
-# Connecting GitHub to Hostinger (one-time setup)
+# Connecting GitHub to Hostinger
 
-There are two ways to get this site from GitHub onto Hostinger. **Option A is
-recommended** — it's fully automatic and already wired up in this repo. Option B
-uses Hostinger's built-in Git feature and needs no secrets, but has limitations.
+Two supported ways to deploy. **Use one, not both.**
+
+The repo is laid out so the app lives at the repo root and lands directly in
+`public_html`. The root `.htaccess` blocks public access to `setup/`,
+`database/`, `legacy/`, `docs/`, `.sql` files, and git internals — so both
+methods below are safe.
 
 ---
 
-## Option A (recommended): GitHub Actions auto-deploy via FTP
+## Option A (current setup): Hostinger hPanel Git deployment
 
-Every push to the `main` branch automatically uploads `public/` (the Content
-Board app) to your Hostinger web space. The workflow is already in
-`.github/workflows/deploy.yml` — you just need to give GitHub your Hostinger
-FTP credentials as **secrets**.
+1. In hPanel go to your website → **Advanced → GIT**.
+2. Connect the repository: `https://github.com/aimbluemedia/aimblue.git`
+   and the branch to deploy. Leave the directory blank (= `public_html`).
+   For a private repo, hPanel shows an SSH key — add it on GitHub under
+   the repo's **Settings → Deploy keys**.
+3. Click **Deploy** to ship the current state.
+4. To make every GitHub push deploy automatically: copy the **webhook URL**
+   hPanel shows and add it on GitHub under the repo's
+   **Settings → Webhooks → Add webhook** (content type: `application/json`).
 
-Only `public/` is deployed. The `setup/` admin tools and `database/` SQL files
-never go to the webroot automatically — see the README for the one-time
-database and admin-password steps.
+After the first deploy, finish the app setup (database credentials via
+`config.php`, admin password via `setup/setadmin.php`) — see the README.
+
+**Note:** `db.config.php` is generated on the server and is gitignored, so
+deploys never overwrite your database credentials.
+
+---
+
+## Option B (alternative): GitHub Actions auto-deploy via FTP
+
+`.github/workflows/deploy.yml` uploads the app via FTPS on every push to
+`main` (and manually via the Actions tab → *Run workflow*). It excludes
+everything that shouldn't be in a webroot. Disconnect the hPanel Git
+deployment first if you switch to this.
 
 ### Step 1 — Get your FTP credentials from Hostinger
 
 1. Log in to [hpanel.hostinger.com](https://hpanel.hostinger.com).
 2. Select your website, then go to **Files → FTP Accounts**.
-3. Note down:
-   - **FTP host** (looks like `ftp.yourdomain.com` or an IP like `185.x.x.x`)
-   - **FTP username** (looks like `u123456789.yourdomain.com`)
-   - **FTP password** — if you don't know it, click **Change FTP password** and set a new one.
+3. Note down the **FTP host**, **username**, and **password**
+   (reset it there if unknown).
 
 ### Step 2 — Add the credentials as GitHub secrets
 
-1. Open the repo on GitHub: `github.com/aimbluemedia/aimblue`.
-2. Go to **Settings → Secrets and variables → Actions → New repository secret**.
-3. Create these three secrets (names must match exactly):
+Repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
-   | Secret name    | Value                          |
-   |----------------|--------------------------------|
-   | `FTP_SERVER`   | your FTP host from step 1      |
-   | `FTP_USERNAME` | your FTP username from step 1  |
-   | `FTP_PASSWORD` | your FTP password from step 1  |
+| Secret name    | Value              |
+|----------------|--------------------|
+| `FTP_SERVER`   | FTP host           |
+| `FTP_USERNAME` | FTP username       |
+| `FTP_PASSWORD` | FTP password       |
 
-> ⚠️ Never put these credentials in a file inside the repo — only in GitHub
-> secrets. Secrets are encrypted and hidden from logs.
+> ⚠️ Never commit credentials to the repo — only GitHub secrets.
 
 ### Step 3 — Check the upload folder
 
-The workflow uploads to `public_html/` inside your FTP account's root folder.
-On most Hostinger plans that's correct as-is. If your FTP account is already
-rooted *inside* `public_html`, edit `.github/workflows/deploy.yml` and change
-`server-dir: ./public_html/` to `server-dir: ./`.
-
-(Not sure which you have? Just run a deploy and see where the files land —
-the safe default in this repo never deletes existing files.)
-
-### Step 4 — Deploy
-
-Push to `main` (or go to the repo's **Actions** tab → *Deploy to Hostinger* →
-**Run workflow** for a manual deploy). The first run uploads everything;
-later runs only upload files that changed.
-
----
-
-## Option B: Hostinger's built-in Git deployment
-
-Hostinger can pull the repo itself, no FTP secrets needed:
-
-1. In hPanel, go to your website → **Advanced → GIT**.
-2. Enter the repository URL: `https://github.com/aimbluemedia/aimblue.git`,
-   branch `main`, and the install path (leave blank for `public_html`).
-3. For a **private** repo, hPanel shows an SSH key to add on GitHub under
-   **Settings → Deploy keys**, and a **webhook URL** to add under
-   **Settings → Webhooks** so pushes deploy automatically.
-
-**Limitation — important for this project:** hPanel Git deploys the *whole
-repo* into your web root, not just `public/`. That would expose the `setup/`
-admin tools (which have no login protection) and the `database/` SQL files to
-the public internet. **Use Option A for this project**, or if you must use
-Option B, delete `setup/` and `database/` from the webroot immediately after
-every deploy.
+The workflow uploads into `public_html/` under the FTP account's root. If
+your FTP account is already rooted *inside* `public_html`, change
+`server-dir: ./public_html/` to `server-dir: ./` in the workflow.
 
 ---
 
 ## Troubleshooting
 
-- **Deploy workflow fails with "530 Login authentication failed"** — the
-  `FTP_USERNAME`/`FTP_PASSWORD` secrets are wrong. Re-check them in hPanel.
-- **Workflow succeeds but the site doesn't change** — files probably landed in
-  the wrong folder; revisit Step 3.
-- **Nothing runs on push** — deploys only trigger from the `main` branch.
+- **403 Forbidden on the site** — there's no `index.php` in `public_html`.
+  With the current repo layout this shouldn't happen; if it does, check the
+  deploy actually ran and that it deployed the branch you expected.
+- **Site asks for database setup after a deploy** — `db.config.php` went
+  missing (e.g. the deploy directory was emptied). Visit `config.php` and
+  re-enter the credentials from hPanel → Databases.
+- **hPanel Git "deploy failed"** — the target directory usually must be
+  empty for the FIRST deploy. Back up `db.config.php`, empty `public_html`,
+  deploy, then restore `db.config.php` (or re-run `config.php`).
+- **Actions run fails with "530 Login authentication failed"** — wrong FTP
+  secrets; re-check them in hPanel.

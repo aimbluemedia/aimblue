@@ -1,0 +1,27 @@
+# ════════════════════════════════════════════════════════════════
+#  Content Board — webroot protection
+#
+#  The whole repository deploys into public_html (Hostinger Git
+#  deployment), so everything that must never be web-reachable is
+#  blocked here. The app itself (index.php, api.php, login.php,
+#  config.php) stays accessible.
+#
+#  DO NOT delete this file from the server.
+# ════════════════════════════════════════════════════════════════
+
+Options -Indexes
+
+RewriteEngine On
+
+# One-time setup tools, SQL, prototypes, docs, git/CI internals
+RewriteRule ^(\.git|\.github|setup|database|legacy|docs)(/|$) - [F,L]
+
+# Repo meta files and any stray SQL dump
+RewriteRule ^(README\.md|CLAUDE\.md|\.gitignore)$ - [F,L]
+RewriteRule \.sql$ - [F,L]
+
+# DB credentials file — served as PHP it outputs nothing, but if the
+# PHP handler ever misbehaves this stops the source from leaking
+<Files "db.config.php">
+  Require all denied
+</Files>
