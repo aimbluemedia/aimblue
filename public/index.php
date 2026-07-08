@@ -10,6 +10,7 @@ $connected   = db_connected();
 // ── Load companies and people from DB for initial page render ──
 $initial_companies = [];
 $initial_people    = [];
+$php_load_error    = $connected ? null : 'Database not connected';
 if ($connected) {
     try {
         $xpdo = db_connect();
@@ -44,10 +45,11 @@ if ($connected) {
         foreach ($xpco as $xpc) $xmap[$xpc['person_id']][] = $xpc['company_id'];
         foreach ($xppl as &$xp) $xp['company_ids'] = isset($xmap[$xp['id']]) ? $xmap[$xp['id']] : [];
         $initial_people = array_values($xppl);
-    } catch (Exception $xe) {
+    } catch (Throwable $xe) {
         error_log("Content Board PHP loader error: " . $xe->getMessage());
         $initial_companies = [];
         $initial_people    = [];
+        $php_load_error    = $xe->getMessage();
     }
 }
 ?>
@@ -840,14 +842,28 @@ const CURRENT_USER = {
 const API = 'api.php';
 async function apiCall(action, opts) {
   opts = opts || {};
-  const url = API + '?action=' + action + (opts.id ? '&id=' + opts.id : '');
-  const r = await fetch(url, {
-    method:  opts.method || 'GET',
-    headers: {'Content-Type':'application/json'},
-    body:    opts.body ? JSON.stringify(opts.body) : undefined
-  });
-  const json = await r.json();
-  if (!json.ok) throw new Error(json.error || 'API error');
+  const url = API + '?action=' + encodeURIComponent(action) + (opts.id ? '&id=' + encodeURIComponent(opts.id) : '');
+  let r;
+  try {
+    r = await fetch(url, {
+      method:  opts.method || 'GET',
+      headers: {'Content-Type':'application/json'},
+      body:    opts.body ? JSON.stringify(opts.body) : undefined
+    });
+  } catch (netErr) {
+    throw new Error('Network error while calling "' + action + '" — check your connection and try again.');
+  }
+  if (r.status === 401 || (r.redirected && r.url.indexOf('login.php') !== -1)) {
+    window.location = 'login.php';
+    throw new Error('Your session has expired — redirecting to login…');
+  }
+  let json;
+  try {
+    json = await r.json();
+  } catch (parseErr) {
+    throw new Error('Server returned an invalid response for "' + action + '" (HTTP ' + r.status + ').');
+  }
+  if (!json.ok) throw new Error(json.error || ('API error (HTTP ' + r.status + ')'));
   return json.data;
 }
 
@@ -2969,65 +2985,135 @@ function buildSocialForm(login, allLogins){
 window.onerror = function(msg,src,line){
   document.body.insertAdjacentHTML('afterbegin','<div style="position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;padding:8px 16px;font-size:12px;font-family:monospace;z-index:9999">JS ERROR: '+msg+' (line '+line+')</div>');
 };
-(function(){
-  try { localStorage.removeItem('contentBoard_v2'); } catch(e){}
-  load();
-  var phpCos = <?= json_encode($initial_companies) ?>;
-  var phpPpl = <?= json_encode($initial_people) ?>;
-  if (phpCos && phpCos.length) {
-    db.companies = phpCos;
-    db.companies.forEach(function(co){
-      co.contentManagerId = co.content_manager_id || null;
-      co.salesPersonId    = co.sales_person_id    || null;
-      co.monthlyPosts     = co.monthly_posts      || null;
-      co.paymentDate      = co.payment_date       || null;
-      co.feeSP  = co.fee_sp_pct != null ? co.fee_sp_pct : 40;
-      co.feeCM  = co.fee_cm_pct != null ? co.fee_cm_pct : 40;
-      co.feeSM  = co.fee_sm_pct != null ? co.fee_sm_pct : 20;
-      co.postingDays = co.posting_days ? co.posting_days.split(',').filter(Boolean) : [];
-      if (!co.posts) co.posts = [];
-      if (co.platform_config && typeof co.platform_config === 'string') {
-        try { co.platform_config = JSON.parse(co.platform_config); } catch(e){ co.platform_config = {}; }
-      }
-    });
+
+// ── Notice banner (init/sync problems are shown, never swallowed) ──
+function cbNotice(html, kind){
+  var el = document.getElementById('cbNotice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cbNotice';
+    document.body.insertAdjacentElement('afterbegin', el);
   }
-  if (phpPpl && phpPpl.length) {
-    db.people = phpPpl;
-    db.people.forEach(function(p){ p.companyIds = p.company_ids || []; });
+  el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;padding:9px 44px 9px 16px;font-size:13px;font-family:system-ui,sans-serif;color:#fff;background:'
+    + (kind==='error' ? '#dc2626' : '#b45309') + ';';
+  el.innerHTML = html
+    + '<button onclick="this.parentNode.remove()" style="position:absolute;right:8px;top:4px;background:none;border:none;color:#fff;font-size:18px;cursor:pointer" aria-label="Dismiss">&times;</button>';
+}
+function cbClearNotice(){
+  var el = document.getElementById('cbNotice');
+  if (el) el.remove();
+}
+
+// ── Normalisers ──
+// Data reaches the client from two sources: the PHP loader (json_encode'd at
+// render time) and api.php. Both may hand us posting_days as an ARRAY (already
+// exploded server-side) or as a raw CSV STRING — the old init assumed string
+// and crashed on `.split` whenever it got an array, which killed the whole
+// init and left the page blank. Normalise defensively for every shape.
+function toDayList(v){
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (typeof v === 'string' && v) return v.split(',').filter(Boolean);
+  return [];
+}
+function normalizeCompany(co){
+  co.contentManagerId = co.content_manager_id || null;
+  co.salesPersonId    = co.sales_person_id    || null;
+  co.monthlyPosts     = co.monthly_posts      || null;
+  co.paymentDate      = co.payment_date       || null;
+  co.feeSP = co.fee_sp_pct != null ? co.fee_sp_pct : 40;
+  co.feeCM = co.fee_cm_pct != null ? co.fee_cm_pct : 40;
+  co.feeSM = co.fee_sm_pct != null ? co.fee_sm_pct : 20;
+  co.postingDays  = toDayList(co.posting_days != null ? co.posting_days : co.postingDays);
+  co.posting_days = co.postingDays;
+  if (typeof co.platform_config === 'string') {
+    try { co.platform_config = JSON.parse(co.platform_config) || {}; } catch(e){ co.platform_config = {}; }
   }
-  save();
+  if (!co.platform_config || typeof co.platform_config !== 'object') co.platform_config = {};
+  if (!Array.isArray(co.posts)) co.posts = [];
+  return co;
+}
+function normalizePerson(p){
+  p.companyIds  = Array.isArray(p.company_ids) ? p.company_ids
+                : (Array.isArray(p.companyIds) ? p.companyIds : []);
+  p.company_ids = p.companyIds;
+  return p;
+}
+// One bad row must not blank the whole board: normalise per-item, skip failures.
+function normalizeList(list, fn, label){
+  var out = [], failed = 0;
+  (Array.isArray(list) ? list : []).forEach(function(item){
+    try { out.push(fn(item)); }
+    catch(e){ failed++; console.error('Skipping '+label+' that failed to normalise:', item, e); }
+  });
+  if (failed) cbNotice(failed + ' ' + label + '(s) could not be loaded — details in the browser console.');
+  return out;
+}
+
+function renderAll(){
   renderSidebar();
   showDashboard();
   renderPeople();
+}
 
-  // Background API sync
-  (async function(){
-    try {
-      var cos = await apiCall('companies');
-      var ppl = await apiCall('people');
-      if (cos && cos.length) {
-        cos.forEach(function(co){
-          co.contentManagerId = co.content_manager_id || null;
-          co.salesPersonId    = co.sales_person_id    || null;
-          co.monthlyPosts     = co.monthly_posts      || null;
-          co.paymentDate      = co.payment_date       || null;
-          co.feeSP  = co.fee_sp_pct != null ? co.fee_sp_pct : 40;
-          co.feeCM  = co.fee_cm_pct != null ? co.fee_cm_pct : 40;
-          co.feeSM  = co.fee_sm_pct != null ? co.fee_sm_pct : 20;
-          co.postingDays = co.posting_days ? co.posting_days.split(',').filter(Boolean) : [];
-          var existing = db.companies.find(function(x){ return x.id===co.id; });
-          co.posts = existing ? (existing.posts||[]) : [];
-        });
-        db.companies = cos;
-      }
-      if (ppl && ppl.length) {
-        ppl.forEach(function(p){ p.companyIds = p.company_ids||[]; });
-        db.people = ppl;
-      }
-      save();
-    } catch(e) { /* silent */ }
-  })();
-})();
+// ── Background API sync (server is the source of truth) ──
+async function syncFromServer(){
+  try {
+    var results = await Promise.all([apiCall('companies'), apiCall('people')]);
+    var cos = normalizeList(results[0], normalizeCompany, 'company');
+    var ppl = normalizeList(results[1], normalizePerson, 'person');
+    // api.php 'companies' carries no posts — keep the ones the PHP loader gave us
+    cos.forEach(function(co){
+      var existing = db.companies.find(function(x){ return x.id === co.id; });
+      co.posts = (existing && Array.isArray(existing.posts)) ? existing.posts : [];
+    });
+    var before = JSON.stringify([db.companies, db.people]);
+    db.companies = cos;
+    db.people    = ppl;
+    save();
+    // Re-render only if the data actually changed AND the user is still on the
+    // dashboard — never yank them out of another view they navigated to.
+    var onDashboard = (document.getElementById('tbTitle')||{}).textContent === 'Dashboard';
+    if (onDashboard && JSON.stringify([db.companies, db.people]) !== before) renderAll();
+    cbClearNotice();
+  } catch(e){
+    console.error('Content Board: background sync failed:', e);
+    cbNotice('Could not refresh data from the server: ' + esc(e.message || String(e))
+      + ' &nbsp;<a href="javascript:void(0)" onclick="cbClearNotice();syncFromServer()" style="color:#fff;text-decoration:underline">Retry</a>');
+  }
+}
+
+function initApp(){
+  try {
+    try { localStorage.removeItem('contentBoard_v2'); } catch(e){}
+    load(); // restores the token; the data key was just cleared
+    if (!db || typeof db !== 'object')  db = {};
+    if (!Array.isArray(db.companies))   db.companies = [];
+    if (!Array.isArray(db.people))      db.people = [];
+
+    var phpCos = <?= json_encode($initial_companies) ?>;
+    var phpPpl = <?= json_encode($initial_people) ?>;
+    var phpErr = <?= json_encode($php_load_error) ?>;
+
+    db.companies = normalizeList(phpCos, normalizeCompany, 'company');
+    db.people    = normalizeList(phpPpl, normalizePerson, 'person');
+    save();
+    renderAll();
+
+    if (phpErr) cbNotice('Initial data could not be loaded (' + esc(phpErr) + ') — retrying from the API…');
+    syncFromServer();
+  } catch(e){
+    console.error('Content Board: init failed:', e);
+    cbNotice('The dashboard failed to initialise: ' + esc(e.message || String(e))
+      + ' &nbsp;<a href="javascript:location.reload()" style="color:#fff;text-decoration:underline">Reload</a>', 'error');
+  }
+}
+
+// Run only once the full document (incl. modals below this script) is parsed.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 </script>
 

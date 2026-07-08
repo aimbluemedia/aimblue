@@ -5,7 +5,6 @@
 // ============================================================
 
 require_once __DIR__ . '/auth.php';
-require_login('login.php');
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
@@ -15,6 +14,12 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
+
+// An expired session must yield JSON 401, never a redirect — fetch() would
+// silently follow it to the login page and choke parsing HTML as JSON.
+if (!is_logged_in()) {
+    json_error('Not authenticated. Please log in again.', 401);
+}
 
 $pdo = db_connect();
 if (!$pdo) {
@@ -62,6 +67,16 @@ try {
                     $co['fee_sm_pct']    = (float)$co['fee_sm_pct'];
                     $co['payment_date']  = $co['payment_date'] ? (int)$co['payment_date'] : null;
                     $co['post_counts']   = $counts[$co['id']] ?? ['total'=>0,'published'=>0,'scheduled'=>0];
+                }
+
+                // CM/SP only see their own companies — must match the filter
+                // the index.php PHP loader applies, or the background sync
+                // would overwrite the filtered list with everything.
+                $filter = user_company_filter();
+                if ($filter !== null) {
+                    $rows = array_values(array_filter($rows, function($co) use ($filter) {
+                        return in_array($co['id'], $filter);
+                    }));
                 }
                 json_ok($rows);
             }
@@ -153,6 +168,8 @@ try {
             if ($method === 'GET') {
                 $co_id = $_GET['company_id'] ?? null;
                 if (!$co_id) json_error('company_id required', 422);
+                $filter = user_company_filter();
+                if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
                 $stmt = $pdo->prepare("
                     SELECT * FROM posts WHERE company_id = ? ORDER BY post_date, platform
                 ");
@@ -442,14 +459,19 @@ try {
         case 'reveal_password':
             $lid = $_GET['id'] ?? '';
             if (!$lid) json_error('Missing id', 422);
-            // Check access
-            $row = $pdo->prepare("SELECT sl.password_enc, slc.company_id FROM social_logins sl LEFT JOIN social_login_companies slc ON slc.login_id = sl.id WHERE sl.id = ? LIMIT 1");
+            $row = $pdo->prepare("SELECT password_enc FROM social_logins WHERE id = ?");
             $row->execute(array($lid));
             $r = $row->fetch();
             if (!$r) json_error('Not found', 404);
             if (!is_admin()) {
+                // Allowed if ANY of the login's linked companies is theirs —
+                // the old LIMIT-1 check tested one arbitrary link and gave
+                // wrong answers for logins shared across companies.
                 $filter = user_company_filter();
-                if ($filter !== null && !in_array($r['company_id'], $filter)) json_error('Forbidden', 403);
+                $lnk = $pdo->prepare("SELECT company_id FROM social_login_companies WHERE login_id = ?");
+                $lnk->execute(array($lid));
+                $linked = $lnk->fetchAll(PDO::FETCH_COLUMN);
+                if (!array_intersect($linked, $filter ?: array())) json_error('Forbidden', 403);
             }
             json_ok(array('password' => decrypt_pw($r['password_enc'])));
             break;
@@ -504,8 +526,20 @@ try {
             json_error('Unknown action: ' . $action, 404);
     }
 
+    // Every handled request exits inside its case, so reaching this point
+    // means the action matched but the HTTP method didn't. The old code fell
+    // through to an empty 200 response, which broke JSON parsing client-side.
+    json_error('Method not allowed for action: ' . $action, 405);
+
 } catch (PDOException $e) {
+    error_log('[Content Board API] DB error in action "' . $action . '": ' . $e->getMessage());
     json_error('Database error: ' . $e->getMessage(), 500);
+} catch (Throwable $e) {
+    // PHP 8 throws Error (TypeError etc.) which PDOException doesn't catch —
+    // without this, fatals rendered an HTML error page instead of JSON.
+    error_log('[Content Board API] Error in action "' . $action . '": '
+        . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    json_error('Server error: ' . $e->getMessage(), 500);
 }
 
 // ── Helpers ───────────────────────────────────────────────

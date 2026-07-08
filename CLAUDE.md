@@ -4,7 +4,13 @@
 Multi-company social media content tracking dashboard. PHP 8.x + MySQL, vanilla JS, Bootstrap 5 CDN. No frameworks, no build step. Hosted on Hostinger shared hosting.
 
 ## Current Status
-The app loads and most features work. **Known issue**: companies/people data sometimes doesn't display after upload — the PHP loader works correctly (verified via diagnostics) but the JS init block occasionally has scope/render issues. Claude Code should rebuild the init with a more reliable approach.
+The app loads and most features work. The former companies/people display bug
+is FIXED: the JS init called `.split(',')` on `posting_days`, which both the
+PHP loader and api.php deliver as an already-exploded array — the resulting
+TypeError killed the whole init before anything rendered. The init was rebuilt
+(2026-07) with shape-tolerant normalisers, per-row error isolation, visible
+error banners instead of silent catches, and a DOMContentLoaded guard.
+Verified end-to-end in Chromium against a real MySQL database.
 
 ## Repo Layout
 ```
@@ -124,10 +130,19 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 ## What Claude Code Should Fix/Build
 
 ### Priority 1 — Stability
-- [ ] Rebuild index.php JS init to be 100% reliable (no silent failures)
-- [ ] Add proper error handling in api.php (try/catch around all DB calls)
+- [x] Rebuild index.php JS init to be 100% reliable (no silent failures) —
+      root cause was `.split(',')` on an array; init rebuilt with normalisers,
+      per-row error isolation, error banners, DOMContentLoaded guard, and a
+      background sync that reports failures with a Retry link
+- [x] Add proper error handling in api.php — catches Throwable (not just
+      PDOException) so fatals return JSON; 401 JSON instead of login redirect;
+      405 for wrong-method requests instead of an empty 200; errors logged via
+      error_log; plus company filtering for CM/SP on `companies`/`posts` and a
+      fixed multi-company access check on `reveal_password`
 - [ ] Remove the debug files (debug.php, fix.php, recover.php etc.) from server
-- [ ] Run fix-fk-constraints.sql on the database
+      — MANUAL: delete via hPanel File Manager (they're gitignored, so deploys
+      will never re-add them)
+- [ ] Run fix-fk-constraints.sql on the database — MANUAL: run in phpMyAdmin
 
 ### Priority 2 — Architecture
 - [ ] Split index.php into separate files:
