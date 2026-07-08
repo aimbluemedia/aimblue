@@ -1,0 +1,33 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches: [main]
+  # Allows manual deploys from the GitHub Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: hostinger-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Upload site via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          # What to upload: the site lives in public/
+          local-dir: ./public/
+          # Where it lands on Hostinger. If your FTP account already points
+          # directly at public_html, change this to: ./
+          server-dir: ./public_html/
+          # Safety: never let a deploy wipe files it didn't create
+          dangerous-clean-slate: false
