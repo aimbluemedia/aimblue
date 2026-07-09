@@ -740,30 +740,35 @@ if ($connected) {
             <input type="url" class="form-control" id="pNotes" placeholder="https://…">
           </div>
         </div>
-        <!-- Social login info panel - shown when platform has a saved login -->
-        <div id="pSocialInfo" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-top:14px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:10px">
-            <i class="bi bi-key me-1" style="color:#ec4899"></i>Social Login for this Platform
+        <!-- Social login info panel - populated for the selected platform -->
+        <div id="pSocialInfo" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8">
+              <i class="bi bi-key me-1" style="color:#ec4899"></i>Social Login for this Platform
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="pSocialToggle" style="font-size:11px;padding:2px 10px">Show <i class="bi bi-chevron-down"></i></button>
           </div>
-          <div class="row g-2" style="font-size:13px">
-            <div class="col-md-6">
-              <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Channel URL</div>
-              <div id="pSocialUrl" style="color:#6c47ff">—</div>
-            </div>
-            <div class="col-md-6">
-              <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Username</div>
-              <div id="pSocialUser" style="font-family:monospace">—</div>
-            </div>
-            <div class="col-md-6">
-              <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Password</div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <span id="pSocialPw" style="font-family:monospace;letter-spacing:2px;color:#64748b">••••••••</span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="pSocialReveal" style="font-size:10px;padding:2px 8px"><i class="bi bi-eye"></i></button>
+          <div id="pSocialBody" style="display:none;margin-top:10px">
+            <div class="row g-2" style="font-size:13px">
+              <div class="col-md-6">
+                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Channel URL</div>
+                <div id="pSocialUrl" style="overflow-wrap:anywhere">—</div>
               </div>
-            </div>
-            <div class="col-md-6">
-              <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Posting Software</div>
-              <div id="pSocialSoftware" style="color:#475569">—</div>
+              <div class="col-md-6">
+                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Login</div>
+                <div id="pSocialUser" style="font-family:monospace;overflow-wrap:anywhere">—</div>
+              </div>
+              <div class="col-md-6">
+                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Password</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="pSocialPw" style="font-family:monospace;letter-spacing:2px;color:#64748b">••••••••</span>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="pSocialReveal" style="font-size:10px;padding:2px 8px"><i class="bi bi-eye"></i></button>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Posting Software</div>
+                <div id="pSocialSoftware" style="color:#475569;overflow-wrap:anywhere">—</div>
+              </div>
             </div>
           </div>
         </div>
@@ -2286,8 +2291,8 @@ document.getElementById('btnAddPost').onclick=()=>{
   document.getElementById('pPlatform').value='';
   document.getElementById('pStatus').value='scheduled';
   document.getElementById('pDate').value='';
-  document.getElementById('pSavingMsg').classList.add('d-none');
   document.getElementById('pErrMsg').classList.add('d-none');
+  initPostSocialInfo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
 };
 
@@ -2303,8 +2308,8 @@ window.openEditPost=function(postId){
   document.getElementById('pDate').value=post.date||'';
   populateCMDropdown(post.assignee||'');
   document.getElementById('pNotes').value=post.notes||'';
-  document.getElementById('pSavingMsg').classList.add('d-none');
   document.getElementById('pErrMsg').classList.add('d-none');
+  initPostSocialInfo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
 };
 
@@ -2427,9 +2432,78 @@ window.deletePerson = function(id, role){
 };
 
 
-// ══════════ OPEN POST MODAL FROM PLATFORM CARD ══════════
+// ══════════ SOCIAL LOGIN PANEL IN THE POST MODAL ══════════
+// Shows the linked login for the active company + selected platform.
+// Runs on every modal open and whenever the Platform dropdown changes.
 var _currentSocialLoginId = null;
 
+function linkifyUrl(raw){
+  if(!raw) return '—';
+  var t = String(raw).trim();
+  if(!/^(https?:\/\/|www\.)/i.test(t)) return esc(t);
+  var href = /^https?:/i.test(t) ? t : 'https://'+t;
+  var disp = t.replace(/^https?:\/\/(www\.)?/i,'');
+  if(disp.length > 60) disp = disp.slice(0,60)+'…';
+  return '<a href="'+esc(href)+'" target="_blank" rel="noopener" title="'+esc(t)+'">'+
+    '<i class="bi bi-box-arrow-up-right me-1" style="font-size:11px"></i>'+esc(disp)+'</a>';
+}
+
+async function updatePostSocialInfo(){
+  var panel = document.getElementById('pSocialInfo');
+  if(!panel) return;
+  // reset password + collapse state
+  document.getElementById('pSocialPw').textContent = '••••••••';
+  var rev = document.getElementById('pSocialReveal');
+  rev.innerHTML = '<i class="bi bi-eye"></i>'; rev.dataset.shown = '0';
+  _currentSocialLoginId = null;
+
+  var co = getCo();
+  var platKey = normPlatform(document.getElementById('pPlatform').value || '');
+  if(!co || !platKey || platKey === 'other'){ panel.style.display = 'none'; return; }
+
+  try {
+    var logins = await apiCall('social_logins');
+    var match = null;
+    // The explicit link from the Edit Company popup wins…
+    var cfg = co.platform_config && co.platform_config[platKey];
+    if (cfg && cfg.social_login_id) {
+      match = logins.find(function(l){ return l.id === cfg.social_login_id; });
+    }
+    // …else any login of that platform linked to this company in the vault
+    if (!match) {
+      match = logins.find(function(l){
+        return l.platform === platKey && (l.company_ids||[]).indexOf(co.id) > -1;
+      });
+    }
+    if (!match){ panel.style.display = 'none'; return; }
+    _currentSocialLoginId = match.id;
+    document.getElementById('pSocialUrl').innerHTML  = linkifyUrl(match.channel_url);
+    document.getElementById('pSocialUser').textContent = match.username || '—';
+    document.getElementById('pSocialSoftware').innerHTML = linkifyUrl(match.notes);
+    panel.style.display = '';
+  } catch(e) {
+    console.error('Post modal: could not load social login info:', e);
+    panel.style.display = 'none';
+  }
+}
+
+document.getElementById('pPlatform').addEventListener('change', updatePostSocialInfo);
+
+document.getElementById('pSocialToggle').addEventListener('click', function(){
+  var body = document.getElementById('pSocialBody');
+  var open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  this.innerHTML = open ? 'Hide <i class="bi bi-chevron-up"></i>' : 'Show <i class="bi bi-chevron-down"></i>';
+});
+
+// Collapse the panel and refresh it — called on every modal open
+function initPostSocialInfo(){
+  document.getElementById('pSocialBody').style.display = 'none';
+  document.getElementById('pSocialToggle').innerHTML = 'Show <i class="bi bi-chevron-down"></i>';
+  updatePostSocialInfo();
+}
+
+// ══════════ OPEN POST MODAL FROM PLATFORM CARD ══════════
 window.openPostForPlatform = async function(platKey) {
   const co = getCo();
   if (!co) return;
@@ -2440,11 +2514,6 @@ window.openPostForPlatform = async function(platKey) {
   document.getElementById('pStatus').value = 'scheduled';
   document.getElementById('pNotes').value = '';
   document.getElementById('pErrMsg').classList.add('d-none');
-  document.getElementById('pSocialInfo').style.display = 'none';
-  document.getElementById('pSocialPw').textContent = '••••••••';
-  document.getElementById('pSocialReveal').innerHTML = '<i class="bi bi-eye"></i>';
-  document.getElementById('pSocialReveal').dataset.shown = '0';
-  _currentSocialLoginId = null;
   editPostId = null;
 
   // Pre-select platform
@@ -2481,25 +2550,7 @@ window.openPostForPlatform = async function(platKey) {
   const cm = (db.people || []).find(function(p){ return p.id === co.contentManagerId && p.role === 'content_manager'; });
   if (cm) populateCMDropdown(cm.name);
 
-  // Fetch social logins for this platform + company
-  try {
-    const logins = await apiCall('social_logins');
-    const match = logins.find(function(l){
-      return l.platform === platKey && l.company_ids && l.company_ids.indexOf(co.id) > -1;
-    });
-    if (match) {
-      _currentSocialLoginId = match.id;
-      const urlEl = document.getElementById('pSocialUrl');
-      urlEl.innerHTML = match.channel_url
-        ? '<a href="'+match.channel_url+'" target="_blank" rel="noopener" style="color:#6c47ff;text-decoration:none">'+
-            '<i class="bi bi-box-arrow-up-right me-1" style="font-size:11px"></i>'+match.channel_url+'</a>'
-        : '—';
-      document.getElementById('pSocialUser').textContent = match.username || '—';
-      document.getElementById('pSocialSoftware').textContent = match.notes || '—';
-      document.getElementById('pSocialInfo').style.display = '';
-    }
-  } catch(e) { /* social logins optional */ }
-
+  initPostSocialInfo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
 };
 
