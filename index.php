@@ -2529,6 +2529,7 @@ var _postingPlatKey = null;
 var _allSocialLogins = [];
 
 var POSTING_PLATFORMS = [
+  {key:'blog',      label:'Blog',      icon:'bi-pencil-square',  color:'#16a34a'},
   {key:'facebook',  label:'Facebook',  icon:'bi-facebook',       color:'#1d4ed8'},
   {key:'instagram', label:'Instagram', icon:'bi-instagram',      color:'#9d174d'},
   {key:'youtube',   label:'YouTube',   icon:'bi-youtube',        color:'#b91c1c'},
@@ -3002,6 +3003,7 @@ window.showUsersPage = async function(){
 
 // ══════════ SOCIAL LOGINS PAGE ══════════
 var SOCIAL_PLATFORMS = [
+  {key:'blog',      label:'Blog',      icon:'bi-pencil-square',  color:'#16a34a'},
   {key:'facebook',  label:'Facebook',  icon:'bi-facebook',       color:'#1d4ed8'},
   {key:'instagram', label:'Instagram', icon:'bi-instagram',      color:'#9d174d'},
   {key:'youtube',   label:'YouTube',   icon:'bi-youtube',        color:'#b91c1c'},
