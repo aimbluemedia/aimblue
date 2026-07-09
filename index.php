@@ -748,6 +748,7 @@ if ($connected) {
             </div>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="pSocialToggle" style="font-size:11px;padding:2px 10px">Show <i class="bi bi-chevron-down"></i></button>
           </div>
+          <div id="pSocialNone" style="display:none;font-size:12px;color:#94a3b8;margin-top:6px">No login saved for this platform yet — add one in Edit company or on the Social Logins page.</div>
           <div id="pSocialBody" style="display:none;margin-top:10px">
             <div class="row g-2" style="font-size:13px">
               <div class="col-md-6">
@@ -2476,7 +2477,19 @@ async function updatePostSocialInfo(){
       var plats = logins.filter(function(l){ return l.platform === platKey; });
       match = plats.find(function(l){ return (l.company_ids||[]).indexOf(co.id) > -1; }) || plats[0] || null;
     }
-    if (!match){ panel.style.display = 'none'; return; }
+    var toggle = document.getElementById('pSocialToggle');
+    var noneEl = document.getElementById('pSocialNone');
+    if (!match){
+      // Keep the bar visible with a hint instead of vanishing silently
+      document.getElementById('pSocialTitle').textContent = '';
+      toggle.style.display = 'none';
+      document.getElementById('pSocialBody').style.display = 'none';
+      noneEl.style.display = '';
+      panel.style.display = '';
+      return;
+    }
+    noneEl.style.display = 'none';
+    toggle.style.display = '';
     document.getElementById('pSocialTitle').textContent = match.title ? ' — ' + match.title : '';
     _currentSocialLoginId = match.id;
     document.getElementById('pSocialUrl').innerHTML  = linkifyUrl(match.channel_url);
