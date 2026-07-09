@@ -744,7 +744,7 @@ if ($connected) {
         <div id="pSocialInfo" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-top:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8">
-              <i class="bi bi-key me-1" style="color:#ec4899"></i>Social Login for this Platform
+              <i class="bi bi-key me-1" style="color:#ec4899"></i>Social Login<span id="pSocialTitle" style="color:#475467"></span>
             </div>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="pSocialToggle" style="font-size:11px;padding:2px 10px">Show <i class="bi bi-chevron-down"></i></button>
           </div>
@@ -2469,13 +2469,15 @@ async function updatePostSocialInfo(){
     if (cfg && cfg.social_login_id) {
       match = logins.find(function(l){ return l.id === cfg.social_login_id; });
     }
-    // …else any login of that platform linked to this company in the vault
+    // …else a login of this platform linked to the company, else ANY login
+    // of this platform the user can see (the API already scopes CM/SP to
+    // their own companies, so this never leaks across roles).
     if (!match) {
-      match = logins.find(function(l){
-        return l.platform === platKey && (l.company_ids||[]).indexOf(co.id) > -1;
-      });
+      var plats = logins.filter(function(l){ return l.platform === platKey; });
+      match = plats.find(function(l){ return (l.company_ids||[]).indexOf(co.id) > -1; }) || plats[0] || null;
     }
     if (!match){ panel.style.display = 'none'; return; }
+    document.getElementById('pSocialTitle').textContent = match.title ? ' — ' + match.title : '';
     _currentSocialLoginId = match.id;
     document.getElementById('pSocialUrl').innerHTML  = linkifyUrl(match.channel_url);
     document.getElementById('pSocialUser').textContent = match.username || '—';
