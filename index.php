@@ -1944,7 +1944,7 @@ function buildPlatformConfig(cfg){
         '</select>'+
         '<button type="button" class="btn btn-sm btn-outline-secondary pcfg-toggle" style="font-size:11px;padding:2px 10px;display:none">Details <i class="bi bi-chevron-down"></i></button>'+
       '</div>'+
-      '<div class="pcfg-details" style="display:none;padding:8px 12px 12px 129px;font-size:12px;color:#475467;background:#f8fafc"></div>'+
+      '<div class="pcfg-details" style="display:none;padding:10px 16px 12px;font-size:12px;color:#475467;background:#f8fafc"></div>'+
     '</div>';
   }).join('');
 
@@ -1971,12 +1971,24 @@ function buildPlatformConfig(cfg){
       return;
     }
     if(sl){
-      box.innerHTML =
-        '<div class="row g-2">'+
-          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Login</div>'+ (sl.username ? esc(sl.username) : '—') +'</div>'+
-          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Channel</div>'+ (sl.channel_url ? '<a href="'+esc(sl.channel_url)+'" target="_blank" rel="noopener">'+esc(sl.channel_url)+'</a>' : '—') +'</div>'+
-          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Posting software</div>'+ (sl.notes ? esc(sl.notes) : '—') +'</div>'+
+      // One field per line: fixed label column, wrapping value column —
+      // long URLs and emails can never overlap neighbouring fields.
+      var fld = function(label, valueHtml){
+        return '<div style="display:flex;gap:12px;align-items:baseline;padding:3px 0">'+
+          '<div style="width:130px;flex-shrink:0;font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase">'+label+'</div>'+
+          '<div style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">'+valueHtml+'</div>'+
         '</div>';
+      };
+      var urlHtml = '—';
+      if(sl.channel_url){
+        var disp = String(sl.channel_url).replace(/^https?:\/\/(www\.)?/,'');
+        if(disp.length > 60) disp = disp.slice(0,60)+'…';
+        urlHtml = '<a href="'+esc(sl.channel_url)+'" target="_blank" rel="noopener" title="'+esc(sl.channel_url)+'">'+esc(disp)+'</a>';
+      }
+      box.innerHTML =
+        fld('Login',            sl.username ? esc(sl.username) : '—') +
+        fld('Channel',          urlHtml) +
+        fld('Posting software', sl.notes ? esc(sl.notes) : '—');
     } else {
       box.innerHTML = '<span style="color:#94a3b8">Login details unavailable.</span>';
     }
