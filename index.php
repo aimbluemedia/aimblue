@@ -665,15 +665,18 @@ if ($connected) {
           </div>
         </div>
         <hr class="my-3">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Posting Days</label>
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">Days this company posts — applies to all platforms.</div>
+          <div class="d-flex gap-2 flex-wrap" id="postingDaysWrap"></div>
+        </div>
         <div class="mb-2">
-          <label class="form-label fw-bold">Platform Posting Schedule</label>
-          <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Select posting days and link a social login for each platform.</div>
+          <label class="form-label fw-bold">Social Logins</label>
+          <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Link a saved login for each platform. Use the arrow to show or hide its details.</div>
           <div id="platformConfigWrap" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
             <!-- populated by buildPlatformConfig() -->
           </div>
         </div>
-        <!-- Keep hidden for backward compat -->
-        <div style="display:none" id="postingDaysWrap"></div>
         <div class="mb-3">
           <label class="form-label">Brand color</label>
           <div class="d-flex gap-2 flex-wrap" id="colorDots"></div>
@@ -1915,40 +1918,80 @@ function buildPostingDays(selectedDays){
   }).join('');
 }
 
-// ── Per-platform posting schedule (companies.platform_config) ──
-// Renders one row per platform in the Add/Edit Company modal: 7 day
-// checkboxes + a social-login selector. Format saved to the DB:
-// {"facebook":{"days":["Mon","Wed"],"social_login_id":"sl_x"}, ...}
+// ── Per-platform social logins (companies.platform_config) ──
+// One row per platform in the Add/Edit Company modal: a dropdown of the
+// saved social logins for that platform plus a show/hide details panel
+// (login, channel, posting software). Posting days are company-wide
+// (postingDaysWrap), not per platform. Saved to the DB as:
+// {"facebook":{"social_login_id":"sl_x"}, ...}
+var _slCache = {};
 function buildPlatformConfig(cfg){
   var wrap = document.getElementById('platformConfigWrap');
   if(!wrap) return;
   cfg = (cfg && typeof cfg === 'object') ? cfg : {};
   wrap.innerHTML = POSTING_PLATFORMS.map(function(pl){
-    var pc   = cfg[pl.key] || {};
-    var days = Array.isArray(pc.days) ? pc.days : [];
+    var pc = cfg[pl.key] || {};
     var curLogin = pc.social_login_id || '';
-    return '<div class="pcfg-row" data-platform="'+pl.key+'" style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap">'+
-      '<div style="width:105px;flex-shrink:0;font-size:12px;font-weight:600;color:#0f172a"><i class="bi '+pl.icon+' me-1" style="color:'+pl.color+'"></i>'+pl.label+'</div>'+
-      '<div style="display:flex;gap:6px">'+DAYS_OF_WEEK.map(function(day){
-        return '<label style="display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;font-size:9px;color:#64748b">'+
-          '<input type="checkbox" class="pcfg-day form-check-input" value="'+day+'" '+(days.indexOf(day)>-1?'checked':'')+' style="margin:0">'+
-          '<span>'+day.slice(0,2)+'</span></label>';
-      }).join('')+'</div>'+
-      // The current login id is embedded as a selected option right away, so
-      // the selection survives even if the social_logins request fails.
-      '<select class="form-select form-select-sm pcfg-login" style="max-width:190px;font-size:12px;margin-left:auto">'+
-        '<option value="">— No login linked —</option>'+
-        (curLogin ? '<option value="'+esc(curLogin)+'" selected>(current login)</option>' : '')+
-      '</select>'+
+    return '<div class="pcfg-row" data-platform="'+pl.key+'" style="border-bottom:1px solid #f1f5f9">'+
+      '<div style="display:flex;align-items:center;gap:12px;padding:8px 12px">'+
+        '<div style="width:105px;flex-shrink:0;font-size:12px;font-weight:600;color:#0f172a"><i class="bi '+pl.icon+' me-1" style="color:'+pl.color+'"></i>'+pl.label+'</div>'+
+        // The current login id is embedded as a selected option right away, so
+        // the selection survives even if the social_logins request fails.
+        '<select class="form-select form-select-sm pcfg-login" style="font-size:12px;flex:1">'+
+          '<option value="">— No login linked —</option>'+
+          (curLogin ? '<option value="'+esc(curLogin)+'" selected>(current login)</option>' : '')+
+        '</select>'+
+        '<button type="button" class="btn btn-sm btn-outline-secondary pcfg-toggle" style="font-size:11px;padding:2px 10px;display:none">Details <i class="bi bi-chevron-down"></i></button>'+
+      '</div>'+
+      '<div class="pcfg-details" style="display:none;padding:8px 12px 12px 129px;font-size:12px;color:#475467;background:#f8fafc"></div>'+
     '</div>';
   }).join('');
+
+  function renderRowDetails(row){
+    var sel = row.querySelector('.pcfg-login');
+    var btn = row.querySelector('.pcfg-toggle');
+    var box = row.querySelector('.pcfg-details');
+    var sl  = _slCache[sel.value];
+    btn.style.display = sel.value ? '' : 'none';
+    if(!sel.value){ box.style.display = 'none'; return; }
+    if(sl){
+      box.innerHTML =
+        '<div class="row g-2">'+
+          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Login</div>'+ (sl.username ? esc(sl.username) : '—') +'</div>'+
+          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Channel</div>'+ (sl.channel_url ? '<a href="'+esc(sl.channel_url)+'" target="_blank" rel="noopener">'+esc(sl.channel_url)+'</a>' : '—') +'</div>'+
+          '<div class="col-md-4"><div style="font-size:10px;font-weight:600;color:#94a3b8;text-transform:uppercase">Posting software</div>'+ (sl.notes ? esc(sl.notes) : '—') +'</div>'+
+        '</div>';
+    } else {
+      box.innerHTML = '<span style="color:#94a3b8">Login details unavailable.</span>';
+    }
+  }
+
+  wrap.querySelectorAll('.pcfg-row').forEach(function(row){
+    row.querySelector('.pcfg-login').onchange = function(){
+      renderRowDetails(row);
+      var box = row.querySelector('.pcfg-details');
+      if(this.value && box.style.display === 'none') toggleRow(row); // reveal on pick
+    };
+    row.querySelector('.pcfg-toggle').onclick = function(){ toggleRow(row); };
+    renderRowDetails(row);
+  });
+  function toggleRow(row){
+    var box = row.querySelector('.pcfg-details');
+    var btn = row.querySelector('.pcfg-toggle');
+    var open = box.style.display === 'none';
+    box.style.display = open ? '' : 'none';
+    btn.innerHTML = open ? 'Hide <i class="bi bi-chevron-up"></i>' : 'Details <i class="bi bi-chevron-down"></i>';
+  }
+
   apiCall('social_logins').then(function(logins){
+    _slCache = {};
+    (logins||[]).forEach(function(sl){ _slCache[sl.id] = sl; });
     (logins||[]).forEach(function(sl){
       var row = wrap.querySelector('.pcfg-row[data-platform="'+sl.platform+'"]');
       var sel = row && row.querySelector('.pcfg-login');
       if(!sel) return;
       var cur = sel.value;
-      var placeholder = sel.querySelector('option[value="'+sl.id+'"]');
+      var placeholder = sel.querySelector('option[value="'+CSS.escape(sl.id)+'"]');
       if(placeholder) placeholder.remove();
       var opt = document.createElement('option');
       opt.value = sl.id;
@@ -1957,6 +2000,7 @@ function buildPlatformConfig(cfg){
       sel.appendChild(opt);
       if(cur && sel.value !== cur) sel.value = cur;
     });
+    wrap.querySelectorAll('.pcfg-row').forEach(renderRowDetails);
   }).catch(function(e){ console.error('Could not load social logins for platform config:', e); });
 }
 
@@ -1970,12 +2014,8 @@ function getPlatformConfig(){
   }
   var cfg = {};
   wrap.querySelectorAll('.pcfg-row').forEach(function(row){
-    var days = [].slice.call(row.querySelectorAll('.pcfg-day:checked')).map(function(c){ return c.value; });
-    var sel  = row.querySelector('.pcfg-login');
-    var loginId = sel ? sel.value : '';
-    if(days.length || loginId){
-      cfg[row.dataset.platform] = { days: days, social_login_id: loginId || null };
-    }
+    var sel = row.querySelector('.pcfg-login');
+    if(sel && sel.value) cfg[row.dataset.platform] = { social_login_id: sel.value };
   });
   return cfg;
 }
