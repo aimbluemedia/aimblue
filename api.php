@@ -96,7 +96,21 @@ try {
                 $smPct   = isset($body['fee_sm_pct']) ? (float)$body['fee_sm_pct'] : 20;
                 $payDay  = isset($body['payment_date']) ? (int)$body['payment_date'] : null;
                 $days   = isset($body['posting_days']) ? implode(',', (array)$body['posting_days']) : null;
-                $platCfg = isset($body['platform_config']) ? json_encode($body['platform_config']) : null;
+
+                // Clean platform_config before persisting: new_login blobs
+                // carry a plaintext password and must never be stored — only
+                // stable fields survive. New logins are created further down
+                // and their ids folded back in.
+                $rawCfg   = (isset($body['platform_config']) && is_array($body['platform_config'])) ? $body['platform_config'] : [];
+                $cleanCfg = [];
+                foreach ($rawCfg as $platKey => $platData) {
+                    if (!is_array($platData)) continue;
+                    $entry = [];
+                    if (!empty($platData['social_login_id'])) $entry['social_login_id'] = $platData['social_login_id'];
+                    if (!empty($platData['days']) && is_array($platData['days'])) $entry['days'] = array_values($platData['days']);
+                    if ($entry) $cleanCfg[$platKey] = $entry;
+                }
+                $platCfg = $cleanCfg ? json_encode($cleanCfg) : null;
 
                 if (!$name) json_error('Company name is required.', 422);
 
@@ -129,27 +143,42 @@ try {
                 ");
                 $stmt->execute([$id,$name,$color,$cmId,$spId,$posts,$fee,$spPct,$cmPct,$smPct,$payDay,$days,$platCfg]);
 
-                // Process new social logins from platform_config
-                if (isset($body['platform_config']) && is_array($body['platform_config'])) {
-                    foreach ($body['platform_config'] as $platKey => $platData) {
-                        if (!empty($platData['new_login']['username']) || !empty($platData['new_login']['channel_url'])) {
-                            $nl = $platData['new_login'];
-                            $slId = uniqid('sl_', true);
-                            $enc  = (!empty($nl['password'])) ? encrypt_pw($nl['password']) : null;
-                            $pdo->prepare("INSERT INTO social_logins (id, platform, title, channel_url, username, password_enc, notes) VALUES (?,?,?,?,?,?,?)")
-                                ->execute([$slId, $platKey,
-                                    isset($nl['title']) ? $nl['title'] : ($platKey . ' — ' . $name),
-                                    isset($nl['channel_url']) ? $nl['channel_url'] : null,
-                                    isset($nl['username'])    ? $nl['username']    : null,
-                                    $enc,
-                                    isset($nl['notes']) ? $nl['notes'] : null]);
-                            $pdo->prepare("INSERT IGNORE INTO social_login_companies (login_id, company_id) VALUES (?,?)")
-                                ->execute([$slId, $id]);
-                        }
-                    }
+                // Create social logins declared inline in platform_config
+                // (added from the Add/Edit Company modal), then fold their
+                // ids into the cleaned config.
+                $createdNew = false;
+                foreach ($rawCfg as $platKey => $platData) {
+                    if (!is_array($platData) || empty($platData['new_login']) || !is_array($platData['new_login'])) continue;
+                    $nl = $platData['new_login'];
+                    if (empty($nl['username']) && empty($nl['channel_url'])) continue;
+                    $slId = uniqid('sl_', true);
+                    $enc  = (!empty($nl['password'])) ? encrypt_pw($nl['password']) : null;
+                    $pdo->prepare("INSERT INTO social_logins (id, platform, title, channel_url, username, password_enc, notes) VALUES (?,?,?,?,?,?,?)")
+                        ->execute([$slId, $platKey,
+                            (!empty($nl['title'])) ? $nl['title'] : ($platKey . ' — ' . $name),
+                            (!empty($nl['channel_url'])) ? $nl['channel_url'] : null,
+                            (!empty($nl['username']))    ? $nl['username']    : null,
+                            $enc,
+                            (!empty($nl['notes'])) ? $nl['notes'] : null]);
+                    $cleanCfg[$platKey]['social_login_id'] = $slId;
+                    $createdNew = true;
                 }
 
-                json_ok(['id' => $id]);
+                // Keep the vault's company links in sync: every login this
+                // company references becomes visible to its CM/SP users.
+                $lnk = $pdo->prepare("INSERT IGNORE INTO social_login_companies (login_id, company_id) VALUES (?,?)");
+                foreach ($cleanCfg as $platData) {
+                    if (!empty($platData['social_login_id'])) $lnk->execute([$platData['social_login_id'], $id]);
+                }
+
+                if ($createdNew) {
+                    $pdo->prepare("UPDATE companies SET platform_config = ? WHERE id = ?")
+                        ->execute([json_encode($cleanCfg), $id]);
+                }
+
+                // Return the final config so the client can mirror it without
+                // ever holding the new_login blob (or its password) again.
+                json_ok(['id' => $id, 'platform_config' => $cleanCfg ?: null]);
             }
             break;
 

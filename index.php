@@ -1940,6 +1940,7 @@ function buildPlatformConfig(cfg){
         '<select class="form-select form-select-sm pcfg-login" style="font-size:12px;flex:1">'+
           '<option value="">— No login linked —</option>'+
           (curLogin ? '<option value="'+esc(curLogin)+'" selected>(current login)</option>' : '')+
+          '<option value="__new__">＋ Add new login…</option>'+
         '</select>'+
         '<button type="button" class="btn btn-sm btn-outline-secondary pcfg-toggle" style="font-size:11px;padding:2px 10px;display:none">Details <i class="bi bi-chevron-down"></i></button>'+
       '</div>'+
@@ -1954,6 +1955,21 @@ function buildPlatformConfig(cfg){
     var sl  = _slCache[sel.value];
     btn.style.display = sel.value ? '' : 'none';
     if(!sel.value){ box.style.display = 'none'; return; }
+    if(sel.value === '__new__'){
+      // Build the inline form only once so typed values survive re-renders
+      if(!box.querySelector('.pcfg-new')){
+        box.innerHTML =
+          '<div class="pcfg-new"><div class="row g-2">'+
+            '<div class="col-md-6"><input class="form-control form-control-sm pcfg-nl-title" placeholder="Title (e.g. AimBlue Facebook)"></div>'+
+            '<div class="col-md-6"><input class="form-control form-control-sm pcfg-nl-user" placeholder="Login / username" autocomplete="off"></div>'+
+            '<div class="col-md-6"><input type="password" class="form-control form-control-sm pcfg-nl-pass" placeholder="Password (stored encrypted)" autocomplete="new-password"></div>'+
+            '<div class="col-md-6"><input class="form-control form-control-sm pcfg-nl-url" placeholder="Channel URL"></div>'+
+            '<div class="col-md-12"><input class="form-control form-control-sm pcfg-nl-notes" placeholder="Posting software (e.g. Buffer, Hootsuite)"></div>'+
+          '</div>'+
+          '<div style="font-size:10px;color:#94a3b8;margin-top:5px">Saved to the Social Logins vault and linked to this company when you save.</div></div>';
+      }
+      return;
+    }
     if(sl){
       box.innerHTML =
         '<div class="row g-2">'+
@@ -1997,7 +2013,7 @@ function buildPlatformConfig(cfg){
       opt.value = sl.id;
       opt.textContent = sl.title + (sl.username ? ' ('+sl.username+')' : '');
       if(sl.id === cur) opt.selected = true;
-      sel.appendChild(opt);
+      sel.insertBefore(opt, sel.querySelector('option[value="__new__"]'));
       if(cur && sel.value !== cur) sel.value = cur;
     });
     wrap.querySelectorAll('.pcfg-row').forEach(renderRowDetails);
@@ -2015,7 +2031,26 @@ function getPlatformConfig(){
   var cfg = {};
   wrap.querySelectorAll('.pcfg-row').forEach(function(row){
     var sel = row.querySelector('.pcfg-login');
-    if(sel && sel.value) cfg[row.dataset.platform] = { social_login_id: sel.value };
+    if(!sel || !sel.value) return;
+    if(sel.value === '__new__'){
+      var v = function(cls){ var el = row.querySelector(cls); return el ? el.value.trim() : ''; };
+      var nl = {
+        title:       v('.pcfg-nl-title'),
+        username:    v('.pcfg-nl-user'),
+        password:    (row.querySelector('.pcfg-nl-pass')||{}).value || '',
+        channel_url: v('.pcfg-nl-url'),
+        notes:       v('.pcfg-nl-notes')
+      };
+      var allEmpty = !nl.title && !nl.username && !nl.password && !nl.channel_url && !nl.notes;
+      if(allEmpty) return; // picked "Add new" but typed nothing — treat as no login
+      if(!nl.username && !nl.channel_url){
+        var pl = POSTING_PLATFORMS.find(function(p){ return p.key===row.dataset.platform; });
+        throw new Error('New '+(pl?pl.label:row.dataset.platform)+' login needs at least a username or a channel URL.');
+      }
+      cfg[row.dataset.platform] = { new_login: nl };
+    } else {
+      cfg[row.dataset.platform] = { social_login_id: sel.value };
+    }
   });
   return cfg;
 }
@@ -2124,7 +2159,7 @@ document.getElementById('btnSaveCo').onclick=async function(){
     };
 
     const coId = _editCoId || uid();
-    await apiCall('save_company', { method:'POST', body: Object.assign({id: coId}, body) });
+    const saved = await apiCall('save_company', { method:'POST', body: Object.assign({id: coId}, body) });
 
     // Update local db (map API names → JS names for UI compatibility)
     const local = {
@@ -2148,7 +2183,10 @@ document.getElementById('btnSaveCo').onclick=async function(){
       fee_sm_pct:       body.fee_sm_pct,
       postingDays:      body.posting_days,
       posting_days:     body.posting_days,
-      platform_config:  body.platform_config,
+      // The server returns the final config (new logins created there get
+      // their real ids; password blobs are stripped) — mirror that, never
+      // the raw form data.
+      platform_config:  (saved && saved.platform_config) || {},
     };
 
     if (_editCoId) {
