@@ -1979,16 +1979,39 @@ function buildPlatformConfig(cfg){
           '<div style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">'+valueHtml+'</div>'+
         '</div>';
       };
-      var urlHtml = '—';
-      if(sl.channel_url){
-        var disp = String(sl.channel_url).replace(/^https?:\/\/(www\.)?/,'');
+      // Any URL-ish value renders as a truncated link opening in a new tab
+      var linkify = function(raw){
+        if(!raw) return '—';
+        var t = String(raw).trim();
+        if(!/^(https?:\/\/|www\.)/i.test(t)) return esc(t);
+        var href = /^https?:/i.test(t) ? t : 'https://'+t;
+        var disp = t.replace(/^https?:\/\/(www\.)?/i,'');
         if(disp.length > 60) disp = disp.slice(0,60)+'…';
-        urlHtml = '<a href="'+esc(sl.channel_url)+'" target="_blank" rel="noopener" title="'+esc(sl.channel_url)+'">'+esc(disp)+'</a>';
-      }
+        return '<a href="'+esc(href)+'" target="_blank" rel="noopener" title="'+esc(t)+'">'+esc(disp)+'</a>';
+      };
       box.innerHTML =
         fld('Login',            sl.username ? esc(sl.username) : '—') +
-        fld('Channel',          urlHtml) +
-        fld('Posting software', sl.notes ? esc(sl.notes) : '—');
+        fld('Channel',          linkify(sl.channel_url)) +
+        fld('Password',         sl.has_password
+          ? '<span class="pcfg-pw" style="font-family:monospace">••••••••</span> <a href="javascript:void(0)" class="pcfg-pw-btn" style="font-size:11px;margin-left:8px">Show</a>'
+          : '—') +
+        fld('Posting software', linkify(sl.notes));
+      var pwBtn = box.querySelector('.pcfg-pw-btn');
+      if(pwBtn) pwBtn.onclick = async function(){
+        var span = box.querySelector('.pcfg-pw');
+        if(this.dataset.shown === '1'){
+          span.textContent = '••••••••'; this.dataset.shown = '0'; this.textContent = 'Show'; return;
+        }
+        this.textContent = '…';
+        try {
+          var d = await apiCall('reveal_password', {id: sl.id});
+          span.textContent = d.password || '(empty)';
+          this.dataset.shown = '1'; this.textContent = 'Hide';
+        } catch(err){
+          span.textContent = 'could not reveal: ' + (err.message || err);
+          this.textContent = 'Show';
+        }
+      };
     } else {
       box.innerHTML = '<span style="color:#94a3b8">Login details unavailable.</span>';
     }
