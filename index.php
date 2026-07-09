@@ -751,13 +751,14 @@ if ($connected) {
           <div id="pSocialNone" style="display:none;font-size:12px;color:#94a3b8;margin-top:6px">No login saved for this platform yet — add one in Edit company or on the Social Logins page.</div>
           <div id="pSocialBody" style="display:none;margin-top:10px">
             <div class="row g-2" style="font-size:13px">
-              <div class="col-md-6">
-                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Channel URL</div>
-                <div id="pSocialUrl" style="overflow-wrap:anywhere">—</div>
-              </div>
+              <!-- Left column: Login + Password. Right column: Channel URL + Posting Software. -->
               <div class="col-md-6">
                 <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Login</div>
                 <div id="pSocialUser" style="font-family:monospace;overflow-wrap:anywhere">—</div>
+              </div>
+              <div class="col-md-6">
+                <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Channel URL</div>
+                <div id="pSocialUrl" style="overflow-wrap:anywhere">—</div>
               </div>
               <div class="col-md-6">
                 <div style="color:#64748b;font-size:11px;font-weight:600;margin-bottom:2px">Password</div>
