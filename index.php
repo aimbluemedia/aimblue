@@ -811,12 +811,13 @@ if ($connected) {
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">Full name *</label>
-          <input class="form-control" id="personName" placeholder="e.g. Jane Smith">
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Email</label>
-          <input class="form-control" id="personEmail" type="email" placeholder="jane@company.com">
+          <label class="form-label">User *</label>
+          <select class="form-select" id="personUserSel">
+            <option value="">— Select a user —</option>
+          </select>
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px">
+            Name and email come from the selected user account. Accounts are created on the Users page.
+          </div>
         </div>
         <div class="mb-3">
           <label class="form-label">Companies / Clients <span class="text-muted fw-normal">(select all that apply)</span></label>
@@ -1172,10 +1173,9 @@ window.openEditPerson = function(id){
   document.getElementById('mPersonTitle').innerHTML = isCM
     ? '<i class="bi bi-person-badge me-2" style="color:#0891b2"></i>Edit content manager'
     : '<i class="bi bi-person-check me-2" style="color:#16a34a"></i>Edit sales person';
-  document.getElementById('personName').value = p.name||'';
-  document.getElementById('personEmail').value = p.email||'';
   document.getElementById('personNotes').value = p.notes||'';
   document.getElementById('personErr').classList.add('d-none');
+  populatePersonUserSelect(p.role, id);
   // Support both old single companyId and new companyIds array
   const existingIds = p.companyIds || (p.companyId ? [p.companyId] : []);
   populatePersonCompanyChecks(existingIds);
@@ -2118,16 +2118,50 @@ function updateFeeDistribution(){
   if(totAmt) totAmt.textContent=fee ? '$'+fee.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
 }
 
+// People are picked from user accounts, not typed in. The dropdown lists
+// users not yet linked to a person of this role (plus, when editing, the
+// user currently linked to this person, preselected).
+var _personUsers = [];
+async function populatePersonUserSelect(role, personId){
+  var sel = document.getElementById('personUserSel');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">Loading users…</option>';
+  var col = role === 'sales_person' ? 'sp_person_id' : 'cm_person_id';
+  try {
+    _personUsers = (await apiCall('users')) || [];
+    var opts = _personUsers.filter(function(u){
+      return !u[col] || (personId && u[col] === personId);
+    });
+    var linkedId = null;
+    if (personId) {
+      var linked = _personUsers.find(function(u){ return u[col] === personId; });
+      if (linked) linkedId = linked.id;
+    }
+    sel.innerHTML =
+      '<option value="">'+(personId ? '— Keep current name (no account link) —' : '— Select a user —')+'</option>' +
+      opts.map(function(u){
+        var label = (u.full_name || u.username) + ' (' + (u.email || u.username) + ')';
+        return '<option value="'+esc(u.id)+'"'+(u.id === linkedId ? ' selected' : '')+'>'+esc(label)+'</option>';
+      }).join('');
+    if (!opts.length) {
+      sel.innerHTML += '<option value="" disabled>No unassigned users — add one on the Users page</option>';
+    }
+  } catch(e) {
+    _personUsers = [];
+    sel.innerHTML = '<option value="">Could not load users: '+esc(e.message || String(e))+'</option>';
+  }
+}
+
 function openAddPerson(role){
   _personRole = role || 'content_manager';
+  window._editPersonId = null;
   const isCM = _personRole === 'content_manager';
   document.getElementById('mPersonTitle').innerHTML = isCM
     ? '<i class="bi bi-person-badge me-2" style="color:#0891b2"></i>Add content manager'
     : '<i class="bi bi-person-check me-2" style="color:#16a34a"></i>Add sales person';
-  document.getElementById('personName').value = '';
-  document.getElementById('personEmail').value = '';
   document.getElementById('personNotes').value = '';
   document.getElementById('personErr').classList.add('d-none');
+  populatePersonUserSelect(_personRole, null);
   populatePersonCompanyChecks([]);
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mAddPerson')).show();
 }
@@ -2366,29 +2400,55 @@ document.getElementById('btnToggle').onclick=()=>{
   document.getElementById('sidebar').classList.toggle('collapsed');
 };
 
-document.getElementById('btnSavePerson').onclick = () => {
-  const name = document.getElementById('personName').value.trim();
-  if (!name){ document.getElementById('personErr').textContent='Name is required.'; document.getElementById('personErr').classList.remove('d-none'); return; }
-  if (!db.people) db.people = [];
-  const personData = {
-    role: _personRole,
-    name,
-    email: document.getElementById('personEmail').value.trim(),
-    companyIds: getPersonCompanyIds(),
-    notes: document.getElementById('personNotes').value.trim(),
-  };
-  if(window._editPersonId){
-    const idx = db.people.findIndex(p=>p.id===window._editPersonId);
-    if(idx>=0) db.people[idx] = {...db.people[idx], ...personData};
+document.getElementById('btnSavePerson').onclick = async function(){
+  // The old handler only wrote to localStorage — people vanished on reload.
+  // Persist through the API, taking name/email from the selected user.
+  const err = document.getElementById('personErr');
+  err.classList.add('d-none');
+  const btn = this;
+  btn.disabled = true;
+  try {
+    if (!db.people) db.people = [];
+    const editing  = window._editPersonId || null;
+    const existing = editing ? db.people.find(p => p.id === editing) : null;
+    const userId   = document.getElementById('personUserSel').value;
+    const usr      = _personUsers.find(u => u.id === userId);
+    if (!usr && !existing) throw new Error('Select a user — accounts are created on the Users page.');
+
+    const body = {
+      id:          editing || undefined,
+      role:        _personRole,
+      name:        usr ? (usr.full_name || usr.username) : existing.name,
+      email:       usr ? (usr.email || '') : (existing.email || ''),
+      notes:       document.getElementById('personNotes').value.trim(),
+      company_ids: getPersonCompanyIds(),
+      user_id:     usr ? usr.id : undefined,
+    };
+    const res = await apiCall('save_person', { method:'POST', body });
+
+    const local = {
+      id: (res && res.id) || editing, role: body.role, name: body.name,
+      email: body.email, notes: body.notes,
+      companyIds: body.company_ids, company_ids: body.company_ids,
+    };
+    if (editing) {
+      const idx = db.people.findIndex(p => p.id === editing);
+      if (idx >= 0) db.people[idx] = { ...db.people[idx], ...local };
+    } else {
+      db.people.push(local);
+    }
     window._editPersonId = null;
-  } else {
-    db.people.push({ id: uid(), ...personData });
+    save();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('mAddPerson')).hide();
+    renderPeople();
+    populateCMDropdown(null);
+    showPeopleTable(_personRole);
+  } catch(e) {
+    err.textContent = e.message || String(e);
+    err.classList.remove('d-none');
+  } finally {
+    btn.disabled = false;
   }
-  save();
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('mAddPerson')).hide();
-  renderPeople();
-  populateCMDropdown(null);
-  showPeopleTable(_personRole);
 };
 
 function getFieldMapping(){

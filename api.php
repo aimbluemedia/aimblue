@@ -289,6 +289,31 @@ try {
                 $ins = $pdo->prepare("INSERT IGNORE INTO person_companies (person_id, company_id) VALUES (?,?)");
                 foreach ($companyIds as $cid) $ins->execute([$id, $cid]);
 
+                // Link this person to a user account (people are picked from
+                // the users dropdown). Sets cm_person_id / sp_person_id and
+                // ensures the user's role string includes the role.
+                $userId = $body['user_id'] ?? null;
+                if ($userId && is_admin()) {
+                    $col   = ($role === 'sales_person') ? 'sp_person_id' : 'cm_person_id';
+                    $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+                    if (in_array($col, $ucols)) {
+                        $ustmt = $pdo->prepare("SELECT id, role FROM users WHERE id = ?");
+                        $ustmt->execute([$userId]);
+                        $usr = $ustmt->fetch();
+                        if ($usr) {
+                            // A person belongs to one account per role — move the
+                            // link if another account previously held it.
+                            $pdo->prepare("UPDATE users SET $col = NULL WHERE $col = ? AND id <> ?")->execute([$id, $userId]);
+                            $pdo->prepare("UPDATE users SET $col = ? WHERE id = ?")->execute([$id, $userId]);
+                            $uroles = array_values(array_filter(array_map('trim', explode(',', (string)$usr['role']))));
+                            if (!in_array('admin', $uroles) && !in_array($role, $uroles)) {
+                                $uroles[] = $role;
+                                $pdo->prepare("UPDATE users SET role = ? WHERE id = ?")->execute([implode(',', $uroles), $userId]);
+                            }
+                        }
+                    }
+                }
+
                 json_ok(['id' => $id]);
             }
             break;
