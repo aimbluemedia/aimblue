@@ -275,6 +275,15 @@ try {
 
                 if (!$role || !$name) json_error('role and name required.', 422);
 
+                // people.email is UNIQUE — if another person already holds
+                // this email (e.g. the same human's other-role record), store
+                // NULL instead of letting ON DUPLICATE KEY hijack that row.
+                if ($email) {
+                    $chk = $pdo->prepare("SELECT id FROM people WHERE email = ? AND id <> ?");
+                    $chk->execute([$email, $id]);
+                    if ($chk->fetch()) $email = null;
+                }
+
                 $stmt = $pdo->prepare("
                     INSERT INTO people (id, role, name, email, notes)
                     VALUES (?,?,?,?,?)
@@ -411,16 +420,19 @@ try {
             $email        = trim(isset($body['email'])        ? $body['email']        : '') ?: null;
             $is_active    = isset($body['is_active'])    ? (int)$body['is_active']    : 1;
             $password     = isset($body['password'])     ? $body['password']     : '';
-            $cm_person_id = (isset($body['cm_person_id']) && $body['cm_person_id']) ? $body['cm_person_id'] : null;
-            $sp_person_id = (isset($body['sp_person_id']) && $body['sp_person_id']) ? $body['sp_person_id'] : null;
+            $is_admin_u   = !empty($body['is_admin']);
+            $is_cm        = !$is_admin_u && !empty($body['is_cm']);
+            $is_sp        = !$is_admin_u && !empty($body['is_sp']);
+            $cmCompanies  = (isset($body['cm_company_ids']) && is_array($body['cm_company_ids'])) ? $body['cm_company_ids'] : [];
+            $spCompanies  = (isset($body['sp_company_ids']) && is_array($body['sp_company_ids'])) ? $body['sp_company_ids'] : [];
 
             // Build role string from selected roles
             $roles = array();
-            if (isset($body['is_admin']) && $body['is_admin']) {
+            if ($is_admin_u) {
                 $roles = array('admin');
             } else {
-                if ($cm_person_id) $roles[] = 'content_manager';
-                if ($sp_person_id) $roles[] = 'sales_person';
+                if ($is_cm) $roles[] = 'content_manager';
+                if ($is_sp) $roles[] = 'sales_person';
                 if (empty($roles)) $roles[] = 'content_manager';
             }
             $role = implode(',', $roles);
@@ -432,39 +444,65 @@ try {
             $colsCheck = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
             $hasDual2  = in_array('cm_person_id', $colsCheck);
             if ($exists) {
-                if ($hasDual2) {
-                    if ($password) {
-                        $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
-                        $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,cm_person_id=?,sp_person_id=?,is_active=?,password_hash=? WHERE id=?");
-                        $stmt->execute(array($username,$full_name,$email,$role,$cm_person_id,$sp_person_id,$is_active,$hash,$id));
-                    } else {
-                        $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,cm_person_id=?,sp_person_id=?,is_active=? WHERE id=?");
-                        $stmt->execute(array($username,$full_name,$email,$role,$cm_person_id,$sp_person_id,$is_active,$id));
-                    }
+                // cm_person_id / sp_person_id are managed by the role sync below
+                if ($password) {
+                    $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
+                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,is_active=?,password_hash=? WHERE id=?");
+                    $stmt->execute(array($username,$full_name,$email,$role,$is_active,$hash,$id));
                 } else {
-                    $pid = $cm_person_id ?: $sp_person_id;
-                    if ($password) {
-                        $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
-                        $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,person_id=?,is_active=?,password_hash=? WHERE id=?");
-                        $stmt->execute(array($username,$full_name,$email,$role,$pid,$is_active,$hash,$id));
-                    } else {
-                        $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,person_id=?,is_active=? WHERE id=?");
-                        $stmt->execute(array($username,$full_name,$email,$role,$pid,$is_active,$id));
-                    }
+                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,is_active=? WHERE id=?");
+                    $stmt->execute(array($username,$full_name,$email,$role,$is_active,$id));
                 }
             } else {
                 if (!$password) json_error('Password required for new user.', 422);
                 if (!$id) $id = uniqid('usr_', true);
                 $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
-                if ($hasDual2) {
-                    $stmt = $pdo->prepare("INSERT INTO users (id,username,password_hash,role,cm_person_id,sp_person_id,full_name,email,is_active) VALUES (?,?,?,?,?,?,?,?,?)");
-                    $stmt->execute(array($id,$username,$hash,$role,$cm_person_id,$sp_person_id,$full_name,$email,$is_active));
-                } else {
-                    $pid = $cm_person_id ?: $sp_person_id;
-                    $stmt = $pdo->prepare("INSERT INTO users (id,username,password_hash,role,person_id,full_name,email,is_active) VALUES (?,?,?,?,?,?,?,?)");
-                    $stmt->execute(array($id,$username,$hash,$role,$pid,$full_name,$email,$is_active));
-                }
+                $stmt = $pdo->prepare("INSERT INTO users (id,username,password_hash,role,full_name,email,is_active) VALUES (?,?,?,?,?,?,?)");
+                $stmt->execute(array($id,$username,$hash,$role,$full_name,$email,$is_active));
             }
+
+            // ── Role ↔ person ↔ companies sync ─────────────────
+            // The Users form assigns companies per role directly; the person
+            // record behind each role is created/updated here automatically
+            // (name/email mirror the user account).
+            if ($hasDual2) {
+                $lnkStmt = $pdo->prepare("SELECT cm_person_id, sp_person_id FROM users WHERE id = ?");
+                $lnkStmt->execute(array($id));
+                $links = $lnkStmt->fetch() ?: array('cm_person_id' => null, 'sp_person_id' => null);
+
+                $syncRole = function($on, $col, $prole, $companies) use ($pdo, $id, $full_name, $email, $links) {
+                    $pid = $links[$col] ?? null;
+                    if (!$on) {
+                        // Unlink but keep the person record (posts/companies may
+                        // still reference it); admins can delete it separately.
+                        if ($pid) $pdo->prepare("UPDATE users SET $col = NULL WHERE id = ?")->execute(array($id));
+                        return;
+                    }
+                    // people.email is UNIQUE, but a dual-role user owns TWO
+                    // person rows — store NULL on the row that would collide.
+                    $safeEmail = $email;
+                    if ($safeEmail) {
+                        $q = $pdo->prepare("SELECT id FROM people WHERE email = ? AND id <> ?");
+                        $q->execute(array($safeEmail, $pid ?: ''));
+                        if ($q->fetch()) $safeEmail = null;
+                    }
+                    if (!$pid) {
+                        $pid = uid();
+                        $pdo->prepare("INSERT INTO people (id, role, name, email) VALUES (?,?,?,?)")
+                            ->execute(array($pid, $prole, $full_name, $safeEmail));
+                        $pdo->prepare("UPDATE users SET $col = ? WHERE id = ?")->execute(array($pid, $id));
+                    } else {
+                        $pdo->prepare("UPDATE people SET name = ?, email = ? WHERE id = ?")
+                            ->execute(array($full_name, $safeEmail, $pid));
+                    }
+                    $pdo->prepare("DELETE FROM person_companies WHERE person_id = ?")->execute(array($pid));
+                    $ins = $pdo->prepare("INSERT IGNORE INTO person_companies (person_id, company_id) VALUES (?,?)");
+                    foreach ($companies as $cid) { if ($cid) $ins->execute(array($pid, $cid)); }
+                };
+                $syncRole($is_cm, 'cm_person_id', 'content_manager', $cmCompanies);
+                $syncRole($is_sp, 'sp_person_id', 'sales_person',    $spCompanies);
+            }
+
             json_ok(array('id' => $id));
             break;
 

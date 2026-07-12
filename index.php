@@ -3032,8 +3032,10 @@ window.showUsersPage = async function(){
             '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="uIsSP" style="width:16px;height:16px;accent-color:#16a34a"> Sales Person</label>'+
           '</div>'+
         '</div>'+
-        '<div class="col-md-6" id="uCMRow" style="display:none"><label class="form-label" style="color:#0891b2">Content Manager person</label><select class="form-select" id="uCMPerson"><option value="">— Select —</option></select></div>'+
-        '<div class="col-md-6" id="uSPRow" style="display:none"><label class="form-label" style="color:#16a34a">Sales Person person</label><select class="form-select" id="uSPPerson"><option value="">— Select —</option></select></div>'+
+        '<div class="col-md-6" id="uCMRow" style="display:none"><label class="form-label" style="color:#0891b2">Content Manager — Companies <span class="text-muted fw-normal" style="font-size:11px">(select all that apply)</span></label>'+
+          '<div id="uCMCompanies" style="max-height:150px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;background:#f8fafc;display:flex;flex-direction:column;gap:6px"></div></div>'+
+        '<div class="col-md-6" id="uSPRow" style="display:none"><label class="form-label" style="color:#16a34a">Sales Person — Companies <span class="text-muted fw-normal" style="font-size:11px">(select all that apply)</span></label>'+
+          '<div id="uSPCompanies" style="max-height:150px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;background:#f8fafc;display:flex;flex-direction:column;gap:6px"></div></div>'+
         '<div class="col-md-4"><label class="form-label">Status</label><select class="form-select" id="uIsActive"><option value="1">Active</option><option value="0">Disabled</option></select></div>'+
       '</div>'+
       '<div class="alert alert-danger d-none mt-3" id="uErr" style="font-size:13px"></div>'+
@@ -3049,14 +3051,32 @@ window.showUsersPage = async function(){
       var isSP=document.getElementById('uIsSP').checked;
       document.getElementById('uCMRow').style.display=(!isA&&isCM)?'':'none';
       document.getElementById('uSPRow').style.display=(!isA&&isSP)?'':'none';
-      var cms=(db.people||[]).filter(function(p){return p.role==='content_manager';});
-      var sps=(db.people||[]).filter(function(p){return p.role==='sales_person';});
-      document.getElementById('uCMPerson').innerHTML='<option value="">— Select —</option>'+cms.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('');
-      document.getElementById('uSPPerson').innerHTML='<option value="">— Select —</option>'+sps.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>';}).join('');
     }
     ['uIsAdmin','uIsCM','uIsSP'].forEach(function(id){
       document.getElementById(id).addEventListener('change', refreshUserRoleSel);
     });
+
+    function fillUserCompanyChecks(elId, selected){
+      var el = document.getElementById(elId);
+      var cos = db.companies || [];
+      if(!cos.length){ el.innerHTML='<span style="font-size:12px;color:#94a3b8">No companies added yet</span>'; return; }
+      el.innerHTML = cos.map(function(c){
+        var ck = (selected||[]).indexOf(c.id) > -1 ? ' checked' : '';
+        return '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">'+
+          '<input type="checkbox" value="'+esc(c.id)+'"'+ck+' style="width:15px;height:15px;accent-color:#6c47ff">'+
+          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+esc(c.color||'#6c47ff')+';flex-shrink:0"></span>'+
+          '<span>'+esc(c.name)+'</span></label>';
+      }).join('');
+    }
+    function getUserCompanyChecks(elId){
+      return [].slice.call(document.querySelectorAll('#'+elId+' input[type=checkbox]:checked'))
+        .map(function(c){ return c.value; });
+    }
+    // A person's companies for prefill when editing
+    function personCompanyIds(personId){
+      var p = (db.people||[]).find(function(x){ return x.id === personId; });
+      return (p && (p.companyIds || p.company_ids)) || [];
+    }
 
     document.getElementById('btnShowAddUser').addEventListener('click', function(){
       document.getElementById('uFormTitle').textContent='Add user';
@@ -3066,6 +3086,8 @@ window.showUsersPage = async function(){
       document.getElementById('uIsActive').value='1';
       document.getElementById('uPwHint').textContent='(required for new)';
       document.getElementById('uErr').classList.add('d-none');
+      fillUserCompanyChecks('uCMCompanies', []);
+      fillUserCompanyChecks('uSPCompanies', []);
       refreshUserRoleSel();
       form.style.display='';
       form.scrollIntoView({behavior:'smooth'});
@@ -3076,19 +3098,26 @@ window.showUsersPage = async function(){
     document.getElementById('btnSaveUser2').addEventListener('click', async function(){
       var isAdmin = document.getElementById('uIsAdmin').checked;
       var body = {
-        id:           document.getElementById('uId').value || undefined,
-        full_name:    document.getElementById('uFullName').value.trim(),
-        username:     document.getElementById('uUsername').value.trim(),
-        email:        document.getElementById('uEmail').value.trim(),
-        password:     document.getElementById('uPassword').value,
-        is_admin:     isAdmin,
-        cm_person_id: (!isAdmin&&document.getElementById('uIsCM').checked) ? document.getElementById('uCMPerson').value||null : null,
-        sp_person_id: (!isAdmin&&document.getElementById('uIsSP').checked) ? document.getElementById('uSPPerson').value||null : null,
-        is_active:    parseInt(document.getElementById('uIsActive').value)
+        id:             document.getElementById('uId').value || undefined,
+        full_name:      document.getElementById('uFullName').value.trim(),
+        username:       document.getElementById('uUsername').value.trim(),
+        email:          document.getElementById('uEmail').value.trim(),
+        password:       document.getElementById('uPassword').value,
+        is_admin:       isAdmin,
+        is_cm:          !isAdmin && document.getElementById('uIsCM').checked,
+        is_sp:          !isAdmin && document.getElementById('uIsSP').checked,
+        cm_company_ids: getUserCompanyChecks('uCMCompanies'),
+        sp_company_ids: getUserCompanyChecks('uSPCompanies'),
+        is_active:      parseInt(document.getElementById('uIsActive').value)
       };
       if(!body.full_name||!body.username){ document.getElementById('uErr').textContent='Name and username required.'; document.getElementById('uErr').classList.remove('d-none'); return; }
       this.disabled=true;
-      try { await apiCall('save_user',{method:'POST',body}); showUsersPage(); }
+      try {
+        await apiCall('save_user',{method:'POST',body});
+        // save_user may create/update person records — refresh the local copy
+        try { var ppl = await apiCall('people'); if (ppl) { db.people = ppl.map(normalizePerson); save(); } } catch(e2){}
+        showUsersPage();
+      }
       catch(e){ document.getElementById('uErr').textContent=e.message; document.getElementById('uErr').classList.remove('d-none'); }
       finally { this.disabled=false; }
     });
@@ -3108,9 +3137,9 @@ window.showUsersPage = async function(){
         document.getElementById('uIsAdmin').checked=roles.indexOf('admin')>-1;
         document.getElementById('uIsCM').checked=roles.indexOf('content_manager')>-1;
         document.getElementById('uIsSP').checked=roles.indexOf('sales_person')>-1;
+        fillUserCompanyChecks('uCMCompanies', u.cm_person_id ? personCompanyIds(u.cm_person_id) : []);
+        fillUserCompanyChecks('uSPCompanies', u.sp_person_id ? personCompanyIds(u.sp_person_id) : []);
         refreshUserRoleSel();
-        if(u.cm_person_id) document.getElementById('uCMPerson').value=u.cm_person_id;
-        if(u.sp_person_id) document.getElementById('uSPPerson').value=u.sp_person_id;
         document.getElementById('uErr').classList.add('d-none');
         form.style.display='';
         form.scrollIntoView({behavior:'smooth'});
