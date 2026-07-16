@@ -1190,6 +1190,50 @@ window.openEditPerson = function(id){
 
 
 
+// The company modal's CM/SP dropdowns list USER ACCOUNTS holding that role
+// (the Users page is the source of truth). Option values stay person ids —
+// what companies.content_manager_id / sales_person_id reference.
+async function populateCoCMSPDropdowns(co){
+  var cmSel = document.getElementById('coContentManager');
+  var spSel = document.getElementById('coSalesPerson');
+  if(!cmSel || !spSel) return;
+  var curCM = co ? (co.contentManagerId || co.content_manager_id || '') : '';
+  var curSP = co ? (co.salesPersonId    || co.sales_person_id    || '') : '';
+  function fill(cms, sps){
+    cmSel.innerHTML = '<option value="">— Select —</option>' + cms.map(function(x){
+      return '<option value="'+esc(x.pid)+'"'+(x.pid===curCM?' selected':'')+'>'+esc(x.label)+'</option>';
+    }).join('');
+    spSel.innerHTML = '<option value="">— Select —</option>' + sps.map(function(x){
+      return '<option value="'+esc(x.pid)+'"'+(x.pid===curSP?' selected':'')+'>'+esc(x.label)+'</option>';
+    }).join('');
+    if(!cms.length) cmSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No content managers — assign the role on the Users page</option>';
+    if(!sps.length) spSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No sales people — assign the role on the Users page</option>';
+    // Keep a current assignment selectable even if it no longer maps to a user
+    if(curCM && !cms.some(function(x){ return x.pid===curCM; })){
+      var pc=(db.people||[]).find(function(p){ return p.id===curCM; });
+      cmSel.innerHTML += '<option value="'+esc(curCM)+'" selected>'+esc(pc?pc.name:'(current assignment)')+'</option>';
+    }
+    if(curSP && !sps.some(function(x){ return x.pid===curSP; })){
+      var ps=(db.people||[]).find(function(p){ return p.id===curSP; });
+      spSel.innerHTML += '<option value="'+esc(curSP)+'" selected>'+esc(ps?ps.name:'(current assignment)')+'</option>';
+    }
+  }
+  try {
+    var users = await apiCall('users');
+    var active = (users||[]).filter(function(u){ return Number(u.is_active) !== 0; });
+    fill(
+      active.filter(function(u){ return u.cm_person_id; }).map(function(u){ return {pid:u.cm_person_id, label:(u.full_name||u.username)}; }),
+      active.filter(function(u){ return u.sp_person_id; }).map(function(u){ return {pid:u.sp_person_id, label:(u.full_name||u.username)}; })
+    );
+  } catch(e){
+    // users API is admin-only; fall back to the person records
+    fill(
+      (db.people||[]).filter(function(p){ return p.role==='content_manager'; }).map(function(p){ return {pid:p.id, label:p.name}; }),
+      (db.people||[]).filter(function(p){ return p.role==='sales_person'; }).map(function(p){ return {pid:p.id, label:p.name}; })
+    );
+  }
+}
+
 window.openEditCompanyModal = function openEditCompanyModal(id){
   const co = db.companies.find(function(c){ return c.id===id; });
   if(!co) return;
@@ -1211,22 +1255,7 @@ window.openEditCompanyModal = function openEditCompanyModal(id){
     const sel = document.getElementById('coTableSel');
     sel.innerHTML = '<option value="'+co.tableId+'" data-name="'+esc(co.tableName||co.tableId)+'" selected>'+esc(co.tableName||co.tableId)+'</option>';
   }
-  var cmSelE = document.getElementById('coContentManager');
-  var spSelE = document.getElementById('coSalesPerson');
-  function fillCMSP(people) {
-    var cmsE = people.filter(function(p){ return p.role==='content_manager'; });
-    var spsE = people.filter(function(p){ return p.role==='sales_person'; });
-    cmSelE.innerHTML = '<option value="">— Select —</option>' + cmsE.map(function(p){ return '<option value="'+p.id+'"'+(p.id===co.contentManagerId||p.id===co.content_manager_id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
-    spSelE.innerHTML = '<option value="">— Select —</option>' + spsE.map(function(p){ return '<option value="'+p.id+'"'+(p.id===co.salesPersonId||p.id===co.sales_person_id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
-    // (was cmSel/spSel — undefined here; the typo aborted this whole
-    // function whenever no CMs or SPs existed yet)
-    if(!cmsE.length) cmSelE.innerHTML += '<option value="" disabled style="color:#94a3b8">No content managers added yet</option>';
-    if(!spsE.length) spSelE.innerHTML += '<option value="" disabled style="color:#94a3b8">No sales people added yet</option>';
-  }
-  fillCMSP(db.people||[]);
-  apiCall('people').then(function(fresh){
-    if(fresh && fresh.length){ db.people = fresh.map(normalizePerson); save(); fillCMSP(db.people); }
-  }).catch(function(){ /* selects already filled from local data above */ });
+  populateCoCMSPDropdowns(co);
   document.getElementById('coMonthlyPosts').value = co.monthlyPosts != null ? co.monthlyPosts : '';
   document.getElementById('coFee').value = co.fee != null ? co.fee : '';
   document.getElementById('coPaymentDate').value = co.paymentDate != null ? co.paymentDate : '';
@@ -2209,28 +2238,7 @@ function openAddCompanyModal(){
   document.getElementById('addCoErr').classList.add('d-none');
   buildColorDots('colorDots');
   _availableFields=[];
-  // Always use fresh people from API to ensure MySQL IDs
-  apiCall('people').then(function(fresh){
-    if(fresh && fresh.length) { db.people = fresh; save(); }
-    var cms = (db.people||[]).filter(function(p){ return p.role==='content_manager'; });
-    var sps = (db.people||[]).filter(function(p){ return p.role==='sales_person'; });
-    var cmSel = document.getElementById('coContentManager');
-    var spSel = document.getElementById('coSalesPerson');
-    if(!cmSel || !spSel) return;
-    cmSel.innerHTML = '<option value="">— Select —</option>' + cms.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    spSel.innerHTML = '<option value="">— Select —</option>' + sps.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    if(!cms.length) cmSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No content managers yet</option>';
-    if(!sps.length) spSel.innerHTML += '<option value="" disabled style="color:#94a3b8">No sales people yet</option>';
-  }).catch(function(){
-    // fallback to cached
-    var cms = (db.people||[]).filter(function(p){ return p.role==='content_manager'; });
-    var sps = (db.people||[]).filter(function(p){ return p.role==='sales_person'; });
-    var cmSel = document.getElementById('coContentManager');
-    var spSel = document.getElementById('coSalesPerson');
-    if(!cmSel||!spSel) return;
-    cmSel.innerHTML = '<option value="">— Select —</option>' + cms.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    spSel.innerHTML = '<option value="">— Select —</option>' + sps.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-  });
+  populateCoCMSPDropdowns(null);
   document.getElementById('coMonthlyPosts').value='';
   document.getElementById('coFee').value='';
   document.getElementById('coPaymentDate').value='';
