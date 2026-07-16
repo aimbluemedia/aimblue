@@ -3059,8 +3059,9 @@ window.showUsersPage = async function(){
         '<div class="col-md-6"><label class="form-label">Full name *</label><input class="form-control" id="uFullName" placeholder="Jane Smith"></div>'+
         '<div class="col-md-6"><label class="form-label">Username *</label><input class="form-control" id="uUsername" placeholder="janesmith" autocomplete="off"></div>'+
         '<div class="col-md-6"><label class="form-label">Email</label><input class="form-control" id="uEmail" type="email"></div>'+
-        '<div class="col-md-4"><label class="form-label">Password <span id="uPwHint" style="font-size:11px;color:#94a3b8">(required for new)</span></label><input class="form-control" id="uPassword" type="password" autocomplete="new-password"></div>'+
-        '<div class="col-md-2"><label class="form-label">Color</label><input type="color" class="form-control form-control-color" id="uColor" value="#6c47ff" style="width:100%;height:38px" title="Shown on their avatar across all pages"></div>'+
+        '<div class="col-md-6"><label class="form-label">Password <span id="uPwHint" style="font-size:11px;color:#94a3b8">(required for new)</span></label><input class="form-control" id="uPassword" type="password" autocomplete="new-password"></div>'+
+        '<div class="col-md-12"><label class="form-label">Color <span class="text-muted fw-normal" style="font-size:11px">(shown on their avatar across all pages)</span></label>'+
+          '<div class="d-flex gap-2 flex-wrap align-items-center" id="uColorDots" style="min-height:30px"></div></div>'+
         '<div class="col-md-12"><label class="form-label">Roles</label>'+
           '<div class="d-flex gap-4 mt-1">'+
             '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="uIsAdmin" style="width:16px;height:16px;accent-color:#6c47ff"> Admin</label>'+
@@ -3092,6 +3093,33 @@ window.showUsersPage = async function(){
       document.getElementById(id).addEventListener('change', refreshUserRoleSel);
     });
 
+    var USER_COLORS = ['#6c47ff','#0891b2','#16a34a','#d97706','#dc2626','#db2777','#ea580c','#0f172a'];
+    function buildUserColorDots(selected){
+      var el = document.getElementById('uColorDots');
+      if(!el) return;
+      var sel = selected || USER_COLORS[0];
+      el.dataset.color = sel;
+      var dots = USER_COLORS.map(function(c){
+        return '<div class="color-dot'+(c===sel?' chosen':'')+'" data-color="'+c+'" style="background:'+c+'" title="'+c+'"></div>';
+      }).join('');
+      // A saved custom colour outside the palette still shows as its own dot
+      if (USER_COLORS.indexOf(sel) === -1) {
+        dots += '<div class="color-dot chosen" data-color="'+esc(sel)+'" style="background:'+esc(sel)+'"></div>';
+      }
+      el.innerHTML = dots;
+      el.querySelectorAll('.color-dot').forEach(function(d){
+        d.onclick = function(){
+          el.querySelectorAll('.color-dot').forEach(function(x){ x.classList.remove('chosen'); });
+          d.classList.add('chosen');
+          el.dataset.color = d.dataset.color;
+        };
+      });
+    }
+    function getUserColor(){
+      var el = document.getElementById('uColorDots');
+      return (el && el.dataset.color) || null;
+    }
+
     function fillUserCompanyChecks(elId, selected){
       var el = document.getElementById(elId);
       var cos = db.companies || [];
@@ -3120,7 +3148,7 @@ window.showUsersPage = async function(){
       ['uFullName','uUsername','uEmail','uPassword'].forEach(function(id){document.getElementById(id).value='';});
       ['uIsAdmin','uIsCM','uIsSP'].forEach(function(id){document.getElementById(id).checked=false;});
       document.getElementById('uIsActive').value='1';
-      document.getElementById('uColor').value='#6c47ff';
+      buildUserColorDots(null);
       document.getElementById('uPwHint').textContent='(required for new)';
       document.getElementById('uErr').classList.add('d-none');
       fillUserCompanyChecks('uCMCompanies', []);
@@ -3140,7 +3168,7 @@ window.showUsersPage = async function(){
         username:       document.getElementById('uUsername').value.trim(),
         email:          document.getElementById('uEmail').value.trim(),
         password:       document.getElementById('uPassword').value,
-        color:          document.getElementById('uColor').value,
+        color:          getUserColor(),
         is_admin:       isAdmin,
         is_cm:          !isAdmin && document.getElementById('uIsCM').checked,
         is_sp:          !isAdmin && document.getElementById('uIsSP').checked,
@@ -3171,7 +3199,7 @@ window.showUsersPage = async function(){
         document.getElementById('uPassword').value='';
         document.getElementById('uPwHint').textContent='(leave blank to keep)';
         document.getElementById('uIsActive').value=u.is_active?'1':'0';
-        document.getElementById('uColor').value=u.color||'#6c47ff';
+        buildUserColorDots(u.color||null);
         var roles=(u.role||'').split(',').map(function(r){return r.trim();});
         document.getElementById('uIsAdmin').checked=roles.indexOf('admin')>-1;
         document.getElementById('uIsCM').checked=roles.indexOf('content_manager')>-1;
