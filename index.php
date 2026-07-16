@@ -1428,6 +1428,21 @@ function showPeopleTable(role){
 };
 
 
+// A company is done for a date when it has posts dated that day and every
+// one of them is published. Content managers get done companies hidden from
+// the calendar day counts and the day popup; admins keep the full picture.
+function coCompleteForDate(co, dateStr){
+  var posts = (co.posts||[]).filter(function(p){
+    var d = String(p.post_date || p.date || '').slice(0,10);
+    return d === dateStr;
+  });
+  if(!posts.length) return false;
+  return posts.every(function(p){ return normStatus(p.status) === 'published'; });
+}
+function hideCompletedDays(){
+  return !CURRENT_USER.is_admin && String(CURRENT_USER.role||'').indexOf('content_manager') > -1;
+}
+
 function buildMonthCalendar(year, month, companies){
   var today = new Date();
   var monthNames = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
@@ -1439,12 +1454,15 @@ function buildMonthCalendar(year, month, companies){
 
   // Build map: day-of-month -> [co] based on postingDays schedule
   var dayCoMap = {};
+  var hideDone = hideCompletedDays();
   for(var d2=1; d2<=daysInMonth; d2++){
     var dow = new Date(year,month,d2).getDay();
     var dowStr = dowName[dow];
+    var dStr = year+'-'+(String(month+1).padStart(2,'0'))+'-'+(String(d2).padStart(2,'0'));
     companies.forEach(function(co){
       var pdays = co.postingDays||[];
       if(pdays.length===0 || pdays.includes(dowStr)){
+        if(hideDone && coCompleteForDate(co, dStr)) return;
         if(!dayCoMap[d2]) dayCoMap[d2]=[];
         dayCoMap[d2].push(co);
       }
@@ -1517,10 +1535,15 @@ window.showDayDetail = function(e, dateStr, day, month, year){
   var dowName=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var dowStr = dowName[dow];
   var companies = db.companies||[];
-  var dayCos = companies.filter(function(co){
+  var scheduled = companies.filter(function(co){
     var pdays = co.postingDays||[];
     return pdays.length===0 || pdays.includes(dowStr);
   });
+  var hideDone = hideCompletedDays();
+  var dayCos = hideDone
+    ? scheduled.filter(function(co){ return !coCompleteForDate(co, dateStr); })
+    : scheduled;
+  var doneCount = scheduled.length - dayCos.length;
   var rows = dayCos.map(function(co){
     var cm=(db.people||[]).find(function(p){return p.id===co.contentManagerId;});
     var sp=(db.people||[]).find(function(p){return p.id===co.salesPersonId;});
@@ -1547,7 +1570,9 @@ window.showDayDetail = function(e, dateStr, day, month, year){
         '<button class="ddp-close" onclick="window.closeDayDetail()">&#215;</button>'+
       '</div>'+
       '<div class="ddp-list">'+
-        (rows||'<div style="padding:20px;text-align:center;color:#94a3b8;font-size:13px">No companies scheduled</div>')+
+        (rows || (doneCount > 0
+          ? '<div style="padding:20px;text-align:center;color:#16a34a;font-size:13px"><i class="bi bi-check-circle me-1"></i>All posting complete for this day</div>'
+          : '<div style="padding:20px;text-align:center;color:#94a3b8;font-size:13px">No companies scheduled</div>'))+
       '</div>'+
     '</div>';
   document.body.appendChild(overlay);
