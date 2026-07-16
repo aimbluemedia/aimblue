@@ -33,6 +33,7 @@ database/                    SQL — run in phpMyAdmin (blocked from web access)
   migration-dual-roles.sql   Adds cm_person_id / sp_person_id to users
   migration-social-logins.sql  Creates social_logins tables
   migration-platform-config.sql  Adds platform_config JSON column to companies
+  migration-user-colors.sql  Adds color to users/people (api.php auto-applies this one)
   fix-fk-constraints.sql     Drops FK constraints on companies (run this!)
 
 legacy/                      Original Claude artifact prototype (blocked from web access)

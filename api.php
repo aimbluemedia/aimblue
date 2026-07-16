@@ -84,6 +84,9 @@ try {
 
         case 'save_company':
             if (in_array($method, ['POST','PUT'])) {
+                // Company info (incl. CM/SP assignment, fees, schedule) is
+                // admin-only; CM/SP roles only get posting access.
+                if (!is_admin()) json_error('Forbidden — only admins can change company info.', 403);
                 $id      = $body['id']      ?? uid();
                 $name    = $body['name']    ?? '';
                 $color   = $body['color']   ?? '#6c47ff';
@@ -184,6 +187,7 @@ try {
 
         case 'delete_company':
             if ($method === 'DELETE' || $method === 'POST') {
+                if (!is_admin()) json_error('Forbidden — only admins can delete companies.', 403);
                 $id = $_GET['id'] ?? $body['id'] ?? '';
                 if (!$id) json_error('Missing id', 422);
                 $pdo->prepare("DELETE FROM companies WHERE id = ?")->execute([$id]);
@@ -209,8 +213,12 @@ try {
 
         case 'save_post':
             if (in_array($method, ['POST','PUT'])) {
+                // Posting access: admins and content managers, own companies only
+                if (!is_admin() && !has_role('content_manager')) json_error('Forbidden', 403);
                 $id       = $body['id']         ?? uid();
                 $coId     = $body['company_id'] ?? '';
+                $filter   = user_company_filter();
+                if ($filter !== null && $coId && !in_array($coId, $filter)) json_error('Forbidden', 403);
                 $title    = $body['title']      ?? '';
                 $platform = $body['platform']   ?? '';
                 $status   = $body['status']     ?? 'scheduled';
@@ -234,8 +242,16 @@ try {
 
         case 'delete_post':
             if ($method === 'DELETE' || $method === 'POST') {
+                if (!is_admin() && !has_role('content_manager')) json_error('Forbidden', 403);
                 $id = $_GET['id'] ?? $body['id'] ?? '';
                 if (!$id) json_error('Missing id', 422);
+                $filter = user_company_filter();
+                if ($filter !== null) {
+                    $own = $pdo->prepare("SELECT company_id FROM posts WHERE id = ?");
+                    $own->execute([$id]);
+                    $pco = $own->fetchColumn();
+                    if ($pco && !in_array($pco, $filter)) json_error('Forbidden', 403);
+                }
                 $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$id]);
                 json_ok(['deleted' => $id]);
             }
@@ -245,6 +261,7 @@ try {
 
         case 'people':
             if ($method === 'GET') {
+                ensure_color_columns($pdo);
                 $role = $_GET['role'] ?? null;
                 if ($role) {
                     $stmt = $pdo->prepare("SELECT * FROM people WHERE role = ? ORDER BY name");
@@ -266,6 +283,7 @@ try {
 
         case 'save_person':
             if (in_array($method, ['POST','PUT'])) {
+                if (!is_admin()) json_error('Forbidden — only admins can manage people.', 403);
                 $id         = $body['id']    ?? uid();
                 $role       = $body['role']  ?? '';
                 $name       = $body['name']  ?? '';
@@ -329,6 +347,7 @@ try {
 
         case 'delete_person':
             if ($method === 'DELETE' || $method === 'POST') {
+                if (!is_admin()) json_error('Forbidden — only admins can manage people.', 403);
                 $id = $_GET['id'] ?? $body['id'] ?? '';
                 if (!$id) json_error('Missing id', 422);
                 $pdo->prepare("DELETE FROM people WHERE id = ?")->execute([$id]);
@@ -383,12 +402,13 @@ try {
 
         case 'users':
             if (!is_admin()) json_error('Forbidden', 403);
+            ensure_color_columns($pdo);
             // Check if new dual-role columns exist yet
             $cols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
             $hasDual = in_array('cm_person_id', $cols);
             if ($hasDual) {
                 $rows = $pdo->query("
-                    SELECT u.id, u.username, u.full_name, u.email, u.role,
+                    SELECT u.id, u.username, u.full_name, u.email, u.role, u.color,
                            u.cm_person_id, u.sp_person_id, u.is_active, u.last_login, u.created_at,
                            cm.name AS cm_person_name,
                            sp.name AS sp_person_name
@@ -400,7 +420,7 @@ try {
             } else {
                 // Old schema fallback
                 $rows = $pdo->query("
-                    SELECT u.id, u.username, u.full_name, u.email, u.role,
+                    SELECT u.id, u.username, u.full_name, u.email, u.role, u.color,
                            NULL AS cm_person_id, NULL AS sp_person_id,
                            u.is_active, u.last_login, u.created_at,
                            p.name AS cm_person_name, NULL AS sp_person_name
@@ -414,12 +434,14 @@ try {
 
         case 'save_user':
             if (!is_admin()) json_error('Forbidden', 403);
+            ensure_color_columns($pdo);
             $id           = isset($body['id'])           ? $body['id']           : null;
             $username     = trim(isset($body['username'])     ? $body['username']     : '');
             $full_name    = trim(isset($body['full_name'])    ? $body['full_name']    : '');
             $email        = trim(isset($body['email'])        ? $body['email']        : '') ?: null;
             $is_active    = isset($body['is_active'])    ? (int)$body['is_active']    : 1;
             $password     = isset($body['password'])     ? $body['password']     : '';
+            $color        = (isset($body['color']) && preg_match('/^#[0-9a-fA-F]{6}$/', $body['color'])) ? strtolower($body['color']) : null;
             $is_admin_u   = !empty($body['is_admin']);
             $is_cm        = !$is_admin_u && !empty($body['is_cm']);
             $is_sp        = !$is_admin_u && !empty($body['is_sp']);
@@ -447,18 +469,18 @@ try {
                 // cm_person_id / sp_person_id are managed by the role sync below
                 if ($password) {
                     $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
-                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,is_active=?,password_hash=? WHERE id=?");
-                    $stmt->execute(array($username,$full_name,$email,$role,$is_active,$hash,$id));
+                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,color=?,is_active=?,password_hash=? WHERE id=?");
+                    $stmt->execute(array($username,$full_name,$email,$role,$color,$is_active,$hash,$id));
                 } else {
-                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,is_active=? WHERE id=?");
-                    $stmt->execute(array($username,$full_name,$email,$role,$is_active,$id));
+                    $stmt = $pdo->prepare("UPDATE users SET username=?,full_name=?,email=?,role=?,color=?,is_active=? WHERE id=?");
+                    $stmt->execute(array($username,$full_name,$email,$role,$color,$is_active,$id));
                 }
             } else {
                 if (!$password) json_error('Password required for new user.', 422);
                 if (!$id) $id = uniqid('usr_', true);
                 $hash = password_hash($password, PASSWORD_BCRYPT, array('cost' => 10));
-                $stmt = $pdo->prepare("INSERT INTO users (id,username,password_hash,role,full_name,email,is_active) VALUES (?,?,?,?,?,?,?)");
-                $stmt->execute(array($id,$username,$hash,$role,$full_name,$email,$is_active));
+                $stmt = $pdo->prepare("INSERT INTO users (id,username,password_hash,role,color,full_name,email,is_active) VALUES (?,?,?,?,?,?,?,?)");
+                $stmt->execute(array($id,$username,$hash,$role,$color,$full_name,$email,$is_active));
             }
 
             // ── Role ↔ person ↔ companies sync ─────────────────
@@ -470,7 +492,7 @@ try {
                 $lnkStmt->execute(array($id));
                 $links = $lnkStmt->fetch() ?: array('cm_person_id' => null, 'sp_person_id' => null);
 
-                $syncRole = function($on, $col, $prole, $companies) use ($pdo, $id, $full_name, $email, $links) {
+                $syncRole = function($on, $col, $prole, $companies) use ($pdo, $id, $full_name, $email, $color, $links) {
                     $pid = $links[$col] ?? null;
                     if (!$on) {
                         // Unlink but keep the person record (posts/companies may
@@ -488,12 +510,12 @@ try {
                     }
                     if (!$pid) {
                         $pid = uid();
-                        $pdo->prepare("INSERT INTO people (id, role, name, email) VALUES (?,?,?,?)")
-                            ->execute(array($pid, $prole, $full_name, $safeEmail));
+                        $pdo->prepare("INSERT INTO people (id, role, name, email, color) VALUES (?,?,?,?,?)")
+                            ->execute(array($pid, $prole, $full_name, $safeEmail, $color));
                         $pdo->prepare("UPDATE users SET $col = ? WHERE id = ?")->execute(array($pid, $id));
                     } else {
-                        $pdo->prepare("UPDATE people SET name = ?, email = ? WHERE id = ?")
-                            ->execute(array($full_name, $safeEmail, $pid));
+                        $pdo->prepare("UPDATE people SET name = ?, email = ?, color = ? WHERE id = ?")
+                            ->execute(array($full_name, $safeEmail, $color, $pid));
                     }
                     $pdo->prepare("DELETE FROM person_companies WHERE person_id = ?")->execute(array($pid));
                     $ins = $pdo->prepare("INSERT IGNORE INTO person_companies (person_id, company_id) VALUES (?,?)");
@@ -647,6 +669,25 @@ function json_error($msg, $code = 400) {
     exit;
 }
 
+
+// Adds users.color / people.color on first use — Hostinger has no SSH, so
+// this micro-migration self-applies instead of requiring phpMyAdmin.
+// (Also documented in database/migration-user-colors.sql.)
+function ensure_color_columns($pdo) {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        if (!$pdo->query("SHOW COLUMNS FROM users LIKE 'color'")->fetch()) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN color VARCHAR(7) DEFAULT NULL");
+        }
+        if (!$pdo->query("SHOW COLUMNS FROM people LIKE 'color'")->fetch()) {
+            $pdo->exec("ALTER TABLE people ADD COLUMN color VARCHAR(7) DEFAULT NULL");
+        }
+    } catch (Throwable $e) {
+        error_log('[Content Board API] color column migration failed: ' . $e->getMessage());
+    }
+}
 
 // ── Encryption helpers ─────────────────────────────────────
 function get_enc_key() {

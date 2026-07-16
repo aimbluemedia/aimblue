@@ -950,6 +950,11 @@ function platLabel(p){return{instagram:'Instagram',linkedin:'LinkedIn',twitter:'
 function statLabel(s){return{published:'Published',scheduled:'Scheduled',draft:'Draft',review:'In review',overdue:'Overdue'}[s]||s;}
 function initials(n){if(!n)return'?';return n.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();}
 function avBg(n){const p=['#6366f1','#0891b2','#16a34a','#d97706','#dc2626','#9333ea','#db2777'];return p[(n||'A').charCodeAt(0)%p.length];}
+// A person's display colour: the one picked on their user account, else a
+// stable name-derived fallback. Used everywhere a person is shown.
+function personColor(p){ return (p && p.color) ? p.color : avBg(p && p.name); }
+function isAdminUser(){ return !!CURRENT_USER.is_admin; }
+function canManagePosts(){ return isAdminUser() || String(CURRENT_USER.role||'').indexOf('content_manager') > -1; }
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function getCo(){return db.companies.find(c=>c.id===activeId);}
@@ -1244,7 +1249,7 @@ function showAllCompanies(){
   const _pd=document.getElementById('platformBubbles-date'); if(_pd) _pd.style.display='none';
   ['tbBadge','tbSyncBadge'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('tbActions').style.display = 'flex';
-  document.getElementById('btnAddCompanyTop').style.display = '';
+  document.getElementById('btnAddCompanyTop').style.display = isAdminUser() ? '' : 'none';
   document.getElementById('btnAddPersonTop').style.display = 'none';
   ['btnAddPost','btnEditCo','btnDelCo','btnPosting'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.style.display='none';
@@ -1274,13 +1279,14 @@ function showAllCompanies(){
         '<div><div style="font-size:13px;font-weight:600;color:#0f172a">'+esc(co.name)+'</div>'+
         (co.tableName?'<div style="font-size:10px;color:#94a3b8"><i class="bi bi-table me-1"></i>'+esc(co.tableName)+'</div>':'')+
         '</div></div></td>'+
-      '<td>'+(cm?'<div class="assn"><div class="av" style="background:'+avBg(cm.name)+'">'+initials(cm.name)+'</div><span class="av-nm">'+esc(cm.name)+'</span></div>':'<span style="color:#cbd5e1">—</span>')+'</td>'+
-      '<td>'+(sp?'<div class="assn"><div class="av" style="background:'+avBg(sp.name)+'">'+initials(sp.name)+'</div><span class="av-nm">'+esc(sp.name)+'</span></div>':'<span style="color:#cbd5e1">—</span>')+'</td>'+
+      '<td>'+(cm?'<div class="assn"><div class="av" style="background:'+personColor(cm)+'">'+initials(cm.name)+'</div><span class="av-nm">'+esc(cm.name)+'</span></div>':'<span style="color:#cbd5e1">—</span>')+'</td>'+
+      '<td>'+(sp?'<div class="assn"><div class="av" style="background:'+personColor(sp)+'">'+initials(sp.name)+'</div><span class="av-nm">'+esc(sp.name)+'</span></div>':'<span style="color:#cbd5e1">—</span>')+'</td>'+
       '<td style="text-align:center"><span class="stat-pill sp-published" style="font-size:11px">'+pub+'</span></td>'+
       '<td style="text-align:center">'+(over?'<span class="stat-pill sp-overdue" style="font-size:11px">'+over+'</span>':'<span style="color:#cbd5e1">—</span>')+'</td>'+
       '<td style="font-size:12px;color:#475569">'+(co.fee!=null?'<strong>$'+Number(co.fee).toLocaleString('en',{minimumFractionDigits:2})+'</strong>/mo':'<span style="color:#cbd5e1">—</span>')+'</td>'+
       '<td style="white-space:nowrap">'+
-        '<button class="btn btn-sm btn-outline-secondary" data-edit-co="'+co.id+'" style="font-size:11px;padding:3px 10px;margin-right:4px"><i class="bi bi-pencil me-1"></i>Edit</button>'+'<button class="btn btn-sm btn-outline-secondary" data-posting-co="'+co.id+'" style="font-size:11px;padding:3px 10px"><i class="bi bi-share me-1"></i>Posting</button>'+
+        (isAdminUser()?'<button class="btn btn-sm btn-outline-secondary" data-edit-co="'+co.id+'" style="font-size:11px;padding:3px 10px;margin-right:4px"><i class="bi bi-pencil me-1"></i>Edit</button>':'')+
+        '<button class="btn btn-sm btn-outline-secondary" data-posting-co="'+co.id+'" style="font-size:11px;padding:3px 10px"><i class="bi bi-share me-1"></i>Posting</button>'+
       '</td>'+
     '</tr>';
   }).join('');
@@ -1328,7 +1334,7 @@ function showPeopleTable(role){
   document.getElementById(isCM ? 'btnNavCM' : 'btnNavSP')?.classList.add('active');
 
   document.getElementById('btnAddCompanyTop').style.display = 'none';
-  document.getElementById('btnAddPersonTop').style.display = '';
+  document.getElementById('btnAddPersonTop').style.display = isAdminUser() ? '' : 'none';
   const addBtn = document.getElementById('btnAddPersonTop');
   addBtn.dataset.role = role;
   addBtn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Add ' + (isCM ? 'content manager' : 'sales person');
@@ -1347,9 +1353,8 @@ function showPeopleTable(role){
     return;
   }
 
-  const bg = isCM ? '#0891b2' : '#16a34a';
-
   const tableRows = people.map(function(p){
+    const bg = p.color || (isCM ? '#0891b2' : '#16a34a');
     const coIds = p.companyIds || (p.companyId ? [p.companyId] : []);
     const linkedCos = coIds.map(function(id){ return db.companies.find(function(c){return c.id===id;}); }).filter(Boolean);
     const coCount = linkedCos.length;
@@ -1394,8 +1399,10 @@ function showPeopleTable(role){
       '<td style="font-size:13px">'+earningsLabel+'</td>'+
       '<td style="font-size:13px">'+postsLabel+'</td>'+
       '<td onclick="event.stopPropagation()" style="white-space:nowrap">'+
-        '<button class="btn btn-sm btn-outline-secondary" data-person-edit="'+p.id+'" style="font-size:11px;padding:3px 10px;margin-right:4px"><i class="bi bi-pencil me-1"></i>Edit</button>'+
-        '<button class="btn btn-sm btn-outline-danger" data-person-delete="'+p.id+'" data-person-role="'+role+'" style="font-size:11px;padding:3px 8px"><i class="bi bi-trash"></i></button>'+
+        (isAdminUser()
+          ? '<button class="btn btn-sm btn-outline-secondary" data-person-edit="'+p.id+'" style="font-size:11px;padding:3px 10px;margin-right:4px"><i class="bi bi-pencil me-1"></i>Edit</button>'+
+            '<button class="btn btn-sm btn-outline-danger" data-person-delete="'+p.id+'" data-person-role="'+role+'" style="font-size:11px;padding:3px 8px"><i class="bi bi-trash"></i></button>'
+          : '')+
       '</td>'+
     '</tr>';
   }).join('');
@@ -1548,8 +1555,8 @@ window.showDayDetail = function(e, dateStr, day, month, year){
     var cm=(db.people||[]).find(function(p){return p.id===co.contentManagerId;});
     var sp=(db.people||[]).find(function(p){return p.id===co.salesPersonId;});
     var meta=[];
-    if(cm) meta.push('<i class="bi bi-person-badge" style="color:#0891b2"></i>'+esc(cm.name));
-    if(sp) meta.push('<i class="bi bi-person-check" style="color:#16a34a"></i>'+esc(sp.name));
+    if(cm) meta.push('<i class="bi bi-person-badge" style="color:'+(cm.color||'#0891b2')+'"></i>'+esc(cm.name));
+    if(sp) meta.push('<i class="bi bi-person-check" style="color:'+(sp.color||'#16a34a')+'"></i>'+esc(sp.name));
     if(co.monthlyPosts) meta.push('<i class="bi bi-calendar3" style="color:#6c47ff"></i>'+co.monthlyPosts+'/mo');
     return '<div class="ddp-co-row" data-coid="'+co.id+'">'+
       '<div class="ddp-av" style="background:'+co.color+'">'+co.name.slice(0,2).toUpperCase()+'</div>'+
@@ -1722,8 +1729,8 @@ function renderCoDetails(co){
   const pills=[];
   const cm=db.people?.find(p=>p.id===co.contentManagerId);
   const sp=db.people?.find(p=>p.id===co.salesPersonId);
-  if(cm) pills.push(`<span class="cd-pill blue"><i class="bi bi-person-badge"></i>${esc(cm.name)}</span>`);
-  if(sp) pills.push(`<span class="cd-pill green"><i class="bi bi-person-check"></i>${esc(sp.name)}</span>`);
+  if(cm) pills.push(`<span class="cd-pill blue"${cm.color?` style="background:${cm.color}22;color:${cm.color}"`:''}><i class="bi bi-person-badge"></i>${esc(cm.name)}</span>`);
+  if(sp) pills.push(`<span class="cd-pill green"${sp.color?` style="background:${sp.color}22;color:${sp.color}"`:''}><i class="bi bi-person-check"></i>${esc(sp.name)}</span>`);
   if(co.monthlyPosts) pills.push(`<span class="cd-pill purple"><i class="bi bi-calendar3"></i>${co.monthlyPosts} posts/mo</span>`);
   if(co.fee!=null){
     const feeStr = '$'+Number(co.fee).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})+'/mo';
@@ -1761,8 +1768,10 @@ function renderMain(){
 
   document.getElementById('btnAddCompanyTop').style.display='none';
   document.getElementById('btnAddPersonTop').style.display='none';
-  ['btnAddPost','btnEditCo','btnDelCo'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.style.display='';
+  // Company info is admin-only; posts are admin + content manager
+  document.getElementById('btnAddPost').style.display = canManagePosts() ? '' : 'none';
+  ['btnEditCo','btnDelCo'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.style.display = isAdminUser() ? '' : 'none';
   });
   if(co.baseId&&co.tableId){
     document.getElementById('tbBadge').style.display='inline-flex';
@@ -1823,7 +1832,8 @@ function renderMain(){
 
   const rows=filtered.map(p=>{
     const pl=normPlatform(p.platform);
-    const av=avBg(p.assignee);
+    const _ap=(db.people||[]).find(function(x){return x.name===p.assignee;});
+    const av=(_ap&&_ap.color)?_ap.color:avBg(p.assignee);
     return`<tr>
       <td><span class="t-title" title="${esc(p.title)}">${esc(p.title)||'—'}</span></td>
       <td>${p.platform?`<span class="plat pl-${pl}">${platLabel(pl)}</span>`:'<span style="color:#94a3b8">—</span>'}</td>
@@ -3000,7 +3010,7 @@ window.showUsersPage = async function(){
       var ll = u.last_login ? new Date(u.last_login).toLocaleDateString('en',{month:'short',day:'numeric',year:'numeric'}) : 'Never';
       return '<tr>'+
         '<td style="padding:11px 14px"><div style="display:flex;align-items:center;gap:10px">'+
-          '<div class="av" style="background:'+(u.role==='admin'?'#6c47ff':u.role==='content_manager'?'#0891b2':'#16a34a')+';width:34px;height:34px;font-size:12px">'+initials(u.full_name)+'</div>'+
+          '<div class="av" style="background:'+(u.color||(u.role==='admin'?'#6c47ff':u.role==='content_manager'?'#0891b2':'#16a34a'))+';width:34px;height:34px;font-size:12px">'+initials(u.full_name)+'</div>'+
           '<div><div style="font-size:13px;font-weight:600;color:#0f172a">'+esc(u.full_name)+'</div>'+
           '<div style="font-size:11px;color:#94a3b8">'+esc(u.email||'')+'</div></div></div></td>'+
         '<td style="padding:11px 14px;font-family:monospace;font-size:12px;color:#64748b">'+esc(u.username)+'</td>'+
@@ -3049,7 +3059,8 @@ window.showUsersPage = async function(){
         '<div class="col-md-6"><label class="form-label">Full name *</label><input class="form-control" id="uFullName" placeholder="Jane Smith"></div>'+
         '<div class="col-md-6"><label class="form-label">Username *</label><input class="form-control" id="uUsername" placeholder="janesmith" autocomplete="off"></div>'+
         '<div class="col-md-6"><label class="form-label">Email</label><input class="form-control" id="uEmail" type="email"></div>'+
-        '<div class="col-md-6"><label class="form-label">Password <span id="uPwHint" style="font-size:11px;color:#94a3b8">(required for new)</span></label><input class="form-control" id="uPassword" type="password" autocomplete="new-password"></div>'+
+        '<div class="col-md-4"><label class="form-label">Password <span id="uPwHint" style="font-size:11px;color:#94a3b8">(required for new)</span></label><input class="form-control" id="uPassword" type="password" autocomplete="new-password"></div>'+
+        '<div class="col-md-2"><label class="form-label">Color</label><input type="color" class="form-control form-control-color" id="uColor" value="#6c47ff" style="width:100%;height:38px" title="Shown on their avatar across all pages"></div>'+
         '<div class="col-md-12"><label class="form-label">Roles</label>'+
           '<div class="d-flex gap-4 mt-1">'+
             '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="uIsAdmin" style="width:16px;height:16px;accent-color:#6c47ff"> Admin</label>'+
@@ -3109,6 +3120,7 @@ window.showUsersPage = async function(){
       ['uFullName','uUsername','uEmail','uPassword'].forEach(function(id){document.getElementById(id).value='';});
       ['uIsAdmin','uIsCM','uIsSP'].forEach(function(id){document.getElementById(id).checked=false;});
       document.getElementById('uIsActive').value='1';
+      document.getElementById('uColor').value='#6c47ff';
       document.getElementById('uPwHint').textContent='(required for new)';
       document.getElementById('uErr').classList.add('d-none');
       fillUserCompanyChecks('uCMCompanies', []);
@@ -3128,6 +3140,7 @@ window.showUsersPage = async function(){
         username:       document.getElementById('uUsername').value.trim(),
         email:          document.getElementById('uEmail').value.trim(),
         password:       document.getElementById('uPassword').value,
+        color:          document.getElementById('uColor').value,
         is_admin:       isAdmin,
         is_cm:          !isAdmin && document.getElementById('uIsCM').checked,
         is_sp:          !isAdmin && document.getElementById('uIsSP').checked,
@@ -3158,6 +3171,7 @@ window.showUsersPage = async function(){
         document.getElementById('uPassword').value='';
         document.getElementById('uPwHint').textContent='(leave blank to keep)';
         document.getElementById('uIsActive').value=u.is_active?'1':'0';
+        document.getElementById('uColor').value=u.color||'#6c47ff';
         var roles=(u.role||'').split(',').map(function(r){return r.trim();});
         document.getElementById('uIsAdmin').checked=roles.indexOf('admin')>-1;
         document.getElementById('uIsCM').checked=roles.indexOf('content_manager')>-1;
