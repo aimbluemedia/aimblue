@@ -848,6 +848,8 @@ const CURRENT_USER = {
   role:        <?= json_encode($user_role) ?>,
   full_name:   <?= json_encode($user_name) ?>,
   is_admin:    <?= $is_admin ? 'true' : 'false' ?>,
+  cm_person_id: <?= json_encode($user['cm_person_id'] ?? null) ?>,
+  sp_person_id: <?= json_encode($user['sp_person_id'] ?? null) ?>,
   company_ids: <?= json_encode($company_ids) ?>
 };
 
@@ -1055,18 +1057,27 @@ function showDashboard(){
   const totalCM = companies.reduce((s,co)=>s+(co.fee||0)*(co.feeCM!=null?co.feeCM:40)/100,0);
   const totalSM = companies.reduce((s,co)=>s+(co.fee||0)*(co.feeSM!=null?co.feeSM:20)/100,0);
 
-  // Update stat cards with aggregate data
+  // Update stat cards with aggregate data (db.companies is already
+  // server-filtered to the user's companies for CM/SP logins)
   document.getElementById('sT').textContent = companies.length || '—';
   document.getElementById('sP').textContent = totalPub || '—';
   document.getElementById('sS').textContent = totalSched || '—';
-  document.getElementById('sR').textContent = cms.length || '—';
   document.getElementById('sO').textContent = totalOver || '—';
   // Stat labels
   document.querySelector('.sc:nth-child(1) .sc-lbl').textContent = 'Companies';
   document.querySelector('.sc.pub .sc-lbl').innerHTML = '<i class="bi bi-check-circle me-1"></i>Published';
   document.querySelector('.sc.sch .sc-lbl').innerHTML = '<i class="bi bi-clock me-1"></i>Scheduled';
-  document.querySelector('.sc.rev .sc-lbl').innerHTML = '<i class="bi bi-people me-1"></i>Content Managers';
   document.querySelector('.sc.ovr .sc-lbl').innerHTML = '<i class="bi bi-exclamation-circle me-1"></i>Overdue';
+  // 4th card: team-wide CM count is an admin stat; CM/SP see their
+  // in-review post count instead
+  if (isAdminUser()) {
+    document.getElementById('sR').textContent = cms.length || '—';
+    document.querySelector('.sc.rev .sc-lbl').innerHTML = '<i class="bi bi-people me-1"></i>Content Managers';
+  } else {
+    const totalRev2 = allPosts.filter(p=>normStatus(p.status)==='review').length;
+    document.getElementById('sR').textContent = totalRev2 || '—';
+    document.querySelector('.sc.rev .sc-lbl').innerHTML = '<i class="bi bi-eye me-1"></i>In review';
+  }
 
   const wrap = document.getElementById('content');
 
@@ -1078,7 +1089,36 @@ function showDashboard(){
   // Summary fee card
   function fmtMoney(n){ return '$'+Number(n).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 
-  const feeCard = totalFee > 0
+  let feeCard = '';
+  if (!isAdminUser()) {
+    // CM/SP only see their OWN earnings: companies where they are the
+    // assigned CM/SP, at their configured percentage. No business-wide
+    // revenue, no other roles' shares.
+    const roleStr2 = String(CURRENT_USER.role||'');
+    const myCards = [];
+    if (roleStr2.indexOf('content_manager') > -1) {
+      const mine = companies.filter(co => co.contentManagerId && co.contentManagerId === CURRENT_USER.cm_person_id);
+      const amt = mine.reduce((s,co)=>s+(co.fee||0)*(co.feeCM!=null?co.feeCM:40)/100,0);
+      myCards.push({label:'My Content Earnings', icon:'bi-person-badge', color:'#0369a1', tint:'#0891b2', border:'#bae6fd', amt:amt, n:mine.length});
+    }
+    if (roleStr2.indexOf('sales_person') > -1) {
+      const mine = companies.filter(co => co.salesPersonId && co.salesPersonId === CURRENT_USER.sp_person_id);
+      const amt = mine.reduce((s,co)=>s+(co.fee||0)*(co.feeSP!=null?co.feeSP:40)/100,0);
+      myCards.push({label:'My Sales Earnings', icon:'bi-person-check', color:'#15803d', tint:'#16a34a', border:'#bbf7d0', amt:amt, n:mine.length});
+    }
+    if (myCards.length) {
+      feeCard = '<div style="display:grid;grid-template-columns:repeat('+myCards.length+',1fr);gap:10px;margin-bottom:14px">'+
+        myCards.map(function(c){
+          return '<div class="sc" style="background:linear-gradient(135deg,'+c.tint+'11,'+c.tint+'22);border-color:'+c.border+'">'+
+            '<div class="sc-lbl" style="color:'+c.color+'"><i class="bi '+c.icon+' me-1"></i>'+c.label+' <span style="font-weight:400;text-transform:none;letter-spacing:0">/ month</span></div>'+
+            '<div class="sc-val" style="color:'+c.color+';font-size:20px">'+fmtMoney(c.amt)+'</div>'+
+            '<div style="font-size:10px;color:#94a3b8;margin-top:4px">across '+c.n+' compan'+(c.n===1?'y':'ies')+'</div>'+
+          '</div>';
+        }).join('')+
+      '</div>';
+    }
+  }
+  else feeCard = totalFee > 0
     ? '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">'+
         '<div class="sc" style="background:linear-gradient(135deg,#6c47ff11,#6c47ff22);border-color:#c4b5fd">'+
           '<div class="sc-lbl" style="color:#6c47ff"><i class="bi bi-cash-stack me-1"></i>Monthly Revenue</div>'+
