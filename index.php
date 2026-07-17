@@ -488,6 +488,7 @@ if ($connected) {
         <i class="bi bi-key" style="color:#ec4899"></i>
         <span class="hide-collapsed">Social Logins</span>
       </button>
+      <?php if ($is_admin): ?>
       <button class="sb-person" id="btnNavCM" onclick="showPeopleTable('content_manager')">
         <i class="bi bi-person-badge" style="color:#0891b2"></i>
         <span class="hide-collapsed">Content Managers</span>
@@ -496,6 +497,7 @@ if ($connected) {
         <i class="bi bi-person-check" style="color:#16a34a"></i>
         <span class="hide-collapsed">Sales People</span>
       </button>
+      <?php endif; ?>
       <button class="sb-settings" id="btnSettings">
         <i class="bi bi-key"></i>
         <span class="hide-collapsed">API settings</span>
@@ -1348,6 +1350,7 @@ function showAllCompanies(){
 // ── showPeopleTable: show content managers or sales people table ──
 window.showPeopleTable = showPeopleTable;
 function showPeopleTable(role){
+  if(!isAdminUser()) return; // page (and its nav links) are admin-only
   activeId = null;
   const isCM = role === 'content_manager';
   const wrap = document.getElementById('content');
