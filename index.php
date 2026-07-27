@@ -979,6 +979,11 @@ function isAdminUser(){ return !!CURRENT_USER.is_admin; }
 function canManagePosts(){ return isAdminUser() || String(CURRENT_USER.role||'').indexOf('content_manager') > -1; }
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// Local (not UTC) YYYY-MM-DD for today — what <input type="date"> expects
+function todayStr(){
+  var t = new Date();
+  return t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+}
 function getCo(){return db.companies.find(c=>c.id===activeId);}
 function pct(n,t){return t?Math.round(n/t*100):0;}
 
@@ -2453,7 +2458,7 @@ document.getElementById('btnAddPost').onclick=()=>{
   populateCMDropdown(_cm ? _cm.name : null);
   document.getElementById('pPlatform').value='';
   document.getElementById('pStatus').value='scheduled';
-  document.getElementById('pDate').value='';
+  document.getElementById('pDate').value=todayStr();
   document.getElementById('pErrMsg').classList.add('d-none');
   initPostSocialInfo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
@@ -2736,10 +2741,7 @@ function initPostSocialInfo(){
   if (ge) ge.classList.add('d-none');
   // Default the date to today when the field is empty (new posts)
   var pd = document.getElementById('pDate');
-  if (pd && !pd.value) {
-    var t = new Date();
-    pd.value = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
-  }
+  if (pd && !pd.value) pd.value = todayStr();
   updatePostSocialInfo();
   updatePostIdeas();
 }
@@ -2824,22 +2826,8 @@ window.openPostForPlatform = async function(platKey) {
     }
   }
 
-  // Pre-fill date from month selector (use 1st of selected month, or today if current month)
-  var selEl = document.getElementById('platformMonthSel');
-  if (selEl && selEl.value) {
-    var parts = selEl.value.split('-');
-    var selYear = parseInt(parts[0]), selMonth = parseInt(parts[1]);
-    var today = new Date();
-    var useDay = (selYear === today.getFullYear() && selMonth === today.getMonth())
-      ? today.getDate()
-      : 1;
-    var dd = String(useDay).padStart(2,'0');
-    var mm = String(selMonth + 1).padStart(2,'0');
-    document.getElementById('pDate').value = selYear + '-' + mm + '-' + dd;
-  } else {
-    var t = new Date();
-    document.getElementById('pDate').value = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
-  }
+  // New posts always start on today's date, whatever month is being viewed
+  document.getElementById('pDate').value = todayStr();
 
   // Pre-fill content manager
   populateCMDropdown(null);
