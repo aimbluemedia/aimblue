@@ -117,6 +117,17 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 | save_social_login | POST | Insert/update social login |
 | delete_social_login | POST | Delete social login |
 | reveal_password | GET | Decrypt and return password (?id=login_id) |
+| content_ideas | GET | Ideas for company (?id=co_id), last-used first |
+| generate_idea | POST | Claude API generates a new idea (admin/CM, own companies) |
+| use_idea | POST | Mark idea used (fills Add Post title) |
+| delete_idea | POST | Delete idea |
+| claude_key_status | GET | Is a Claude API key configured (admin) |
+| save_claude_key | POST | Store Claude API key, AES-encrypted (admin) |
+
+Content Ideas: nav page for admin+CM. Per-company `content_prompt`
+(companies column, edited in the company modal) + all previous ideas feed a
+claude-opus-5 call (raw cURL in api.php — no Composer on shared hosting).
+The content_ideas table and content_prompt column self-migrate on first use.
 
 ## Roles & Access
 | Feature | Admin | Content Manager | Sales Person |

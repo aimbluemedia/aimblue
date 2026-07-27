@@ -146,6 +146,13 @@ try {
                 ");
                 $stmt->execute([$id,$name,$color,$cmId,$spId,$posts,$fee,$spPct,$cmPct,$smPct,$payDay,$days,$platCfg]);
 
+                // Content Ideas prompt — only touched when the client sends it
+                if (array_key_exists('content_prompt', $body)) {
+                    ensure_content_ideas($pdo);
+                    $pdo->prepare("UPDATE companies SET content_prompt = ? WHERE id = ?")
+                        ->execute([trim((string)$body['content_prompt']) ?: null, $id]);
+                }
+
                 // Create social logins declared inline in platform_config
                 // (added from the Add/Edit Company modal), then fold their
                 // ids into the cleaned config.
@@ -636,6 +643,123 @@ try {
             break;
 
 
+        // ── CONTENT IDEAS ──────────────────────────────────
+
+        case 'content_ideas':
+            if ($method === 'GET') {
+                ensure_content_ideas($pdo);
+                $co_id = $_GET['company_id'] ?? $_GET['id'] ?? '';
+                if (!$co_id) json_error('company_id required', 422);
+                $filter = user_company_filter();
+                if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
+                $stmt = $pdo->prepare("SELECT * FROM content_ideas WHERE company_id = ?
+                                       ORDER BY COALESCE(used_at, created_at) DESC, created_at DESC");
+                $stmt->execute([$co_id]);
+                json_ok($stmt->fetchAll());
+            }
+            break;
+
+        case 'generate_idea':
+            if ($method === 'POST') {
+                // Content managers (and admins) generate ideas for their companies
+                if (!is_admin() && !has_role('content_manager')) json_error('Forbidden', 403);
+                ensure_content_ideas($pdo);
+                $co_id = $body['company_id'] ?? '';
+                if (!$co_id) json_error('company_id required', 422);
+                $filter = user_company_filter();
+                if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
+
+                $co = $pdo->prepare("SELECT name, content_prompt FROM companies WHERE id = ?");
+                $co->execute([$co_id]);
+                $company = $co->fetch();
+                if (!$company) json_error('Company not found', 404);
+
+                $keyEnc = get_setting($pdo, 'claude_api_key');
+                $apiKey = $keyEnc ? decrypt_pw($keyEnc) : '';
+                if (!$apiKey) json_error('No Claude API key configured. An admin can add one on the Content Ideas page.', 422);
+
+                $prev = $pdo->prepare("SELECT idea FROM content_ideas WHERE company_id = ? ORDER BY created_at DESC LIMIT 100");
+                $prev->execute([$co_id]);
+                $previous = $prev->fetchAll(PDO::FETCH_COLUMN);
+
+                $system = "You are a social media content strategist. Generate exactly ONE new content idea "
+                        . "for the company described by the user: a short, specific, actionable post concept "
+                        . "(one to three sentences) that a content manager can create today. It must be clearly "
+                        . "different from every previous idea listed. Return ONLY the idea text — no numbering, "
+                        . "no quotes, no preamble.";
+                $userMsg = "Company: " . $company['name'] . "\n\n"
+                         . "Content brief for this company:\n"
+                         . (trim((string)$company['content_prompt']) !== ''
+                             ? $company['content_prompt']
+                             : "(No brief set — assume a general small-business social media presence.)")
+                         . "\n\nPrevious ideas (do NOT repeat or closely resemble these):\n"
+                         . ($previous ? "- " . implode("\n- ", $previous) : "(none yet)")
+                         . "\n\nGenerate one new idea.";
+
+                $ideaText = claude_generate($apiKey, $system, $userMsg);
+
+                $id = uid();
+                $pdo->prepare("INSERT INTO content_ideas (id, company_id, idea) VALUES (?,?,?)")
+                    ->execute([$id, $co_id, $ideaText]);
+                $row = $pdo->prepare("SELECT * FROM content_ideas WHERE id = ?");
+                $row->execute([$id]);
+                json_ok($row->fetch());
+            }
+            break;
+
+        case 'use_idea':
+            if ($method === 'POST') {
+                if (!is_admin() && !has_role('content_manager')) json_error('Forbidden', 403);
+                ensure_content_ideas($pdo);
+                $id = $body['id'] ?? '';
+                if (!$id) json_error('Missing id', 422);
+                $own = $pdo->prepare("SELECT company_id FROM content_ideas WHERE id = ?");
+                $own->execute([$id]);
+                $cid = $own->fetchColumn();
+                if (!$cid) json_error('Not found', 404);
+                $filter = user_company_filter();
+                if ($filter !== null && !in_array($cid, $filter)) json_error('Forbidden', 403);
+                $pdo->prepare("UPDATE content_ideas SET used_at = NOW() WHERE id = ?")->execute([$id]);
+                json_ok(['id' => $id]);
+            }
+            break;
+
+        case 'delete_idea':
+            if ($method === 'POST' || $method === 'DELETE') {
+                if (!is_admin() && !has_role('content_manager')) json_error('Forbidden', 403);
+                ensure_content_ideas($pdo);
+                $id = $_GET['id'] ?? $body['id'] ?? '';
+                if (!$id) json_error('Missing id', 422);
+                $own = $pdo->prepare("SELECT company_id FROM content_ideas WHERE id = ?");
+                $own->execute([$id]);
+                $cid = $own->fetchColumn();
+                if ($cid) {
+                    $filter = user_company_filter();
+                    if ($filter !== null && !in_array($cid, $filter)) json_error('Forbidden', 403);
+                }
+                $pdo->prepare("DELETE FROM content_ideas WHERE id = ?")->execute([$id]);
+                json_ok(['deleted' => $id]);
+            }
+            break;
+
+        case 'claude_key_status':
+            if ($method === 'GET') {
+                if (!is_admin()) json_error('Forbidden', 403);
+                json_ok(['configured' => (bool) get_setting($pdo, 'claude_api_key')]);
+            }
+            break;
+
+        case 'save_claude_key':
+            if ($method === 'POST') {
+                if (!is_admin()) json_error('Forbidden', 403);
+                $key = trim($body['api_key'] ?? '');
+                if (!$key) json_error('API key required', 422);
+                // Stored AES-encrypted, same scheme as social login passwords
+                put_setting($pdo, 'claude_api_key', encrypt_pw($key));
+                json_ok(['configured' => true]);
+            }
+            break;
+
         default:
             json_error('Unknown action: ' . $action, 404);
     }
@@ -669,6 +793,87 @@ function json_error($msg, $code = 400) {
     exit;
 }
 
+
+// Content Ideas storage: creates the content_ideas table and the
+// companies.content_prompt column on first use (self-applying, like the
+// color columns below — Hostinger has no SSH).
+function ensure_content_ideas($pdo) {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS content_ideas (
+            id         VARCHAR(36) NOT NULL,
+            company_id VARCHAR(36) NOT NULL,
+            idea       TEXT        NOT NULL,
+            created_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            used_at    DATETIME    DEFAULT NULL,
+            PRIMARY KEY (id),
+            KEY idx_ci_company (company_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        if (!$pdo->query("SHOW COLUMNS FROM companies LIKE 'content_prompt'")->fetch()) {
+            $pdo->exec("ALTER TABLE companies ADD COLUMN content_prompt TEXT DEFAULT NULL");
+        }
+    } catch (Throwable $e) {
+        error_log('[Content Board API] content_ideas migration failed: ' . $e->getMessage());
+    }
+}
+
+function get_setting($pdo, $key) {
+    $s = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = ?");
+    $s->execute([$key]);
+    $v = $s->fetchColumn();
+    return $v === false ? null : $v;
+}
+
+function put_setting($pdo, $key, $value) {
+    $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES (?,?)
+                   ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")
+        ->execute([$key, $value]);
+}
+
+// Calls the Claude Messages API (raw cURL — no Composer on shared hosting).
+// Returns the generated text or throws with a readable message.
+function claude_generate($apiKey, $system, $userMsg) {
+    $payload = json_encode([
+        'model'         => 'claude-opus-5',
+        'max_tokens'    => 1024,
+        'output_config' => ['effort' => 'low'],
+        'system'        => $system,
+        'messages'      => [['role' => 'user', 'content' => $userMsg]],
+    ]);
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_TIMEOUT        => 120,
+        CURLOPT_HTTPHEADER     => [
+            'x-api-key: ' . $apiKey,
+            'anthropic-version: 2023-06-01',
+            'content-type: application/json',
+        ],
+    ]);
+    $res  = curl_exec($ch);
+    $err  = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    if ($res === false) throw new Exception('Could not reach the Claude API: ' . $err);
+    $json = json_decode($res, true);
+    if ($code !== 200) {
+        $msg = $json['error']['message'] ?? ('HTTP ' . $code);
+        throw new Exception('Claude API error: ' . $msg);
+    }
+    if (($json['stop_reason'] ?? '') === 'refusal') {
+        throw new Exception('Claude declined to generate this content.');
+    }
+    foreach (($json['content'] ?? []) as $block) {
+        if (($block['type'] ?? '') === 'text' && trim($block['text'] ?? '') !== '') {
+            return trim($block['text']);
+        }
+    }
+    throw new Exception('Claude returned no text.');
+}
 
 // Adds users.color / people.color on first use — Hostinger has no SSH, so
 // this micro-migration self-applies instead of requiring phpMyAdmin.
