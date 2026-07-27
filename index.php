@@ -713,11 +713,10 @@ if ($connected) {
             <input class="form-control" id="pTitle" placeholder="e.g. Q3 product launch announcement">
           </div>
           <div class="col-12" id="pGenWrap" style="display:none">
-            <button type="button" class="btn w-100" id="btnGenPost"
-              style="background:linear-gradient(135deg,#6c47ff,#9333ea);color:#fff;font-weight:700;font-size:15px;padding:12px;border-radius:10px;border:none;box-shadow:0 4px 14px rgba(108,71,255,.35)">
-              <i class="bi bi-stars me-2"></i>Generate Content Idea
-            </button>
-            <div id="pGenErr" class="alert alert-danger d-none mt-2 mb-0" style="font-size:12px"></div>
+            <div id="pIdeaNote" style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#78350f;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px">
+              <i class="bi bi-stars" style="color:#d97706"></i>
+              <span id="pIdeaNoteTxt">Today&rsquo;s content idea has been filled in above.</span>
+            </div>
           </div>
           <div class="col-12" id="pIdeaBox" style="display:none">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:6px">
@@ -1222,12 +1221,18 @@ function showDashboard(){
   wrap.innerHTML =
     feeCard +
     '<div id="dashCalContainer"></div>' +
-    todaySection;
+    '<div id="dashIdeaWrap"></div>' +
+    todaySection +
+    '<div id="dashPrevIdeasWrap"></div>';
 
   // Wire today company row clicks
   wrap.querySelectorAll('tr[data-coid]').forEach(function(tr){
     tr.addEventListener('click', function(){ selectCo(tr.dataset.coid); });
   });
+
+  // Content ideas — one per company per day, generated from here
+  window._todayCoIds = todayCompanies.map(function(c){ return c.id; });
+  renderDashboardIdeas();
 
   // Render calendar
   const now = new Date();
@@ -2461,6 +2466,7 @@ document.getElementById('btnAddPost').onclick=()=>{
   document.getElementById('pDate').value=todayStr();
   document.getElementById('pErrMsg').classList.add('d-none');
   initPostSocialInfo();
+  prefillTodayIdea();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
 };
 
@@ -2515,6 +2521,7 @@ document.getElementById('btnSavePost').onclick=async()=>{
     if (_pendingIdeaId) {
       apiCall('use_idea', {method:'POST', body:{id: _pendingIdeaId}}).catch(function(){});
       _pendingIdeaId = null;
+      _dailyIdeas = null; // dashboard reloads so the idea shows as used
     }
     if(editPostId){
       co.posts=co.posts.map(p=>p.id===editPostId?post:p);
@@ -2735,10 +2742,9 @@ function initPostSocialInfo(){
   document.getElementById('pSocialBody').style.display = 'none';
   document.getElementById('pSocialToggle').innerHTML = 'Show <i class="bi bi-chevron-down"></i>';
   _pendingIdeaId = null;
+  // The idea note only appears once prefillTodayIdea() actually fills one in
   var gw = document.getElementById('pGenWrap');
-  if (gw) gw.style.display = canManagePosts() ? '' : 'none';
-  var ge = document.getElementById('pGenErr');
-  if (ge) ge.classList.add('d-none');
+  if (gw) gw.style.display = 'none';
   // Default the date to today when the field is empty (new posts)
   var pd = document.getElementById('pDate');
   if (pd && !pd.value) pd.value = todayStr();
@@ -2750,26 +2756,187 @@ function initPostSocialInfo(){
 // is actually saved (cancelling the modal keeps the idea available).
 var _pendingIdeaId = null;
 
-document.getElementById('btnGenPost').addEventListener('click', async function(){
+/* ════════════════════════════════
+   CONTENT IDEAS — one per company per day.
+   Generated from the dashboard; the post popup only consumes them.
+════════════════════════════════ */
+var _dailyIdeas = null;   // { today: 'YYYY-MM-DD', ideas: [...] }
+
+function ideaForDate(row){ return row.for_date || row.idea_date || String(row.created_at||'').slice(0,10); }
+
+async function loadDailyIdeas(force){
+  if (_dailyIdeas && !force) return _dailyIdeas;
+  _dailyIdeas = await apiCall('daily_ideas');
+  return _dailyIdeas;
+}
+
+function todaysIdeaForCo(coId){
+  if (!_dailyIdeas) return null;
+  var t = _dailyIdeas.today || todayStr();
+  return (_dailyIdeas.ideas||[]).find(function(i){
+    return i.company_id === coId && ideaForDate(i) === t;
+  }) || null;
+}
+
+// Fill the post title with today's idea for the open company (new posts only).
+async function prefillTodayIdea(){
   var co = getCo();
-  var err = document.getElementById('pGenErr');
-  err.classList.add('d-none');
-  if (!co) { err.textContent = 'Open a company first.'; err.classList.remove('d-none'); return; }
-  var btn = this;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="bi bi-arrow-repeat spin-sm me-2"></i>Generating…';
-  try {
-    var idea = await apiCall('generate_idea', {method:'POST', body:{company_id: co.id}});
-    document.getElementById('pTitle').value = idea.idea;
+  var tEl = document.getElementById('pTitle');
+  var note = document.getElementById('pGenWrap');
+  if (note) note.style.display = 'none';
+  if (!co || !tEl || !canManagePosts()) return;
+  try { await loadDailyIdeas(); } catch(e){ return; }
+  var idea = todaysIdeaForCo(co.id);
+  if (!idea) return;
+  if (!tEl.value.trim()) {
+    tEl.value = idea.idea;
     _pendingIdeaId = idea.id;
-  } catch(e){
-    err.textContent = e.message || String(e);
-    err.classList.remove('d-none');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea';
+    document.getElementById('pIdeaNoteTxt').textContent = "Today's content idea has been filled in above.";
+    if (note) note.style.display = '';
   }
-});
+}
+
+// ── Dashboard: today's idea per company + previous ideas ──
+async function renderDashboardIdeas(){
+  var top  = document.getElementById('dashIdeaWrap');
+  var prevW = document.getElementById('dashPrevIdeasWrap');
+  if (!top || !prevW) return;
+  if (!canManagePosts()) { top.innerHTML = ''; prevW.innerHTML = ''; return; }
+
+  var card = function(inner){
+    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-top:16px">'+inner+'</div>';
+  };
+  var hdr = function(icon, text, right){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc">'+
+      '<div style="font-size:14px;font-weight:700;color:#0f172a"><i class="bi '+icon+' me-2" style="color:var(--at-purple)"></i>'+text+'</div>'+
+      (right||'')+'</div>';
+  };
+
+  top.innerHTML = card(hdr('bi-stars','Content ideas for today','') +
+    '<div style="padding:16px;color:#94a3b8;font-size:13px">Loading ideas…</div>');
+
+  try { await loadDailyIdeas(true); }
+  catch(e){
+    top.innerHTML = card(hdr('bi-stars','Content ideas for today','') +
+      '<div style="padding:16px;color:#b91c1c;font-size:13px">Could not load content ideas: '+esc(e.message||String(e))+'</div>');
+    prevW.innerHTML = '';
+    return;
+  }
+
+  var today = _dailyIdeas.today || todayStr();
+  var all   = _dailyIdeas.ideas || [];
+  var todays = all.filter(function(i){ return ideaForDate(i) === today; });
+  var prev   = all.filter(function(i){ return ideaForDate(i) !== today; });
+
+  var coIds = window._todayCoIds || [];
+  var missing = coIds.filter(function(cid){
+    return !todays.some(function(i){ return i.company_id === cid; });
+  });
+
+  function ideaRow(i, showDate){
+    var co = (db.companies||[]).find(function(c){ return c.id === i.company_id; });
+    var color = i.company_color || (co ? co.color : '#94a3b8');
+    var name  = i.company_name || (co ? co.name : 'Company');
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 16px;border-bottom:1px solid #f1f5f9">'+
+      '<span style="flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:'+esc(color)+';margin-top:5px"></span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:11px;font-weight:700;color:#64748b">'+esc(name)+
+          (showDate ? ' <span style="font-weight:400;color:#cbd5e1">· '+esc(ideaForDate(i))+'</span>' : '')+
+          (i.used_at ? ' <span style="color:#16a34a;font-weight:600">· used</span>' : '')+
+        '</div>'+
+        '<div style="font-size:13px;color:#0f172a;line-height:1.45">'+esc(i.idea)+'</div>'+
+      '</div>'+
+      '<button class="btn btn-sm" data-useidea="'+esc(i.company_id)+'" '+
+        'style="flex:0 0 auto;font-size:11px;font-weight:600;background:#faf5ff;border:1px solid #e9d5ff;color:#6c47ff;border-radius:7px;white-space:nowrap">'+
+        '<i class="bi bi-plus-lg me-1"></i>Use in a post</button>'+
+    '</div>';
+  }
+
+  var genBtn = '<button class="btn" id="btnGenDayIdeas" '+
+    'style="background:linear-gradient(135deg,#6c47ff,#9333ea);color:#fff;font-weight:700;font-size:13px;padding:8px 16px;border-radius:9px;border:none;box-shadow:0 4px 14px rgba(108,71,255,.35);white-space:nowrap">'+
+    '<i class="bi bi-stars me-2"></i>Generate Content Idea</button>';
+
+  var body = todays.length
+    ? todays.map(function(i){ return ideaRow(i, false); }).join('')
+    : '<div style="padding:16px;color:#94a3b8;font-size:13px">No idea generated for today yet — press <strong>Generate Content Idea</strong> to create one for each company posting today.</div>';
+
+  var footNote = '';
+  if (todays.length && missing.length) {
+    footNote = '<div style="padding:10px 16px;font-size:12px;color:#b45309;background:#fffbeb">'+
+      missing.length+' compan'+(missing.length===1?'y':'ies')+' posting today still need an idea.</div>';
+  } else if (todays.length && !missing.length && coIds.length) {
+    footNote = '<div style="padding:10px 16px;font-size:12px;color:#16a34a;background:#f0fdf4">'+
+      'Every company posting today has its idea. Only one idea is generated per company per day.</div>';
+  }
+
+  top.innerHTML = card(
+    hdr('bi-stars','Content ideas for today', genBtn) +
+    body + footNote +
+    '<div id="dashIdeaErr" class="d-none" style="padding:10px 16px;font-size:12px;color:#b91c1c;background:#fef2f2"></div>'
+  );
+
+  prevW.innerHTML = prev.length
+    ? card(hdr('bi-clock-history','Previous content ideas',
+        '<span style="background:#e2e8f0;color:#475569;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600">'+prev.length+'</span>') +
+        prev.slice(0, 20).map(function(i){ return ideaRow(i, true); }).join(''))
+    : '';
+
+  // Wire "Use in a post" — opens the company then the Add post popup
+  [top, prevW].forEach(function(root){
+    root.querySelectorAll('[data-useidea]').forEach(function(btn){
+      btn.onclick = function(){
+        selectCo(btn.dataset.useidea);
+        setTimeout(function(){ document.getElementById('btnAddPost').click(); }, 250);
+      };
+    });
+  });
+
+  var gb = document.getElementById('btnGenDayIdeas');
+  if (gb) gb.onclick = generateTodayIdeas;
+}
+
+// Generates today's idea for every company posting today that lacks one.
+async function generateTodayIdeas(){
+  var btn = document.getElementById('btnGenDayIdeas');
+  var err = document.getElementById('dashIdeaErr');
+  var coIds = window._todayCoIds || [];
+  if (err) err.classList.add('d-none');
+
+  if (!coIds.length) {
+    if (err) { err.textContent = 'No companies are scheduled to post today.'; err.classList.remove('d-none'); }
+    return;
+  }
+  var todayD = (_dailyIdeas && _dailyIdeas.today) || todayStr();
+  var todo = coIds.filter(function(cid){
+    return !(_dailyIdeas && (_dailyIdeas.ideas||[]).some(function(i){
+      return i.company_id === cid && ideaForDate(i) === todayD;
+    }));
+  });
+  if (!todo.length) {
+    if (err) { err.textContent = 'Today’s ideas are already generated — only one per company per day.'; err.classList.remove('d-none'); }
+    return;
+  }
+
+  btn.disabled = true;
+  var failures = [];
+  for (var n = 0; n < todo.length; n++) {
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>Generating ' + (n+1) + ' of ' + todo.length + '…';
+    try {
+      await apiCall('generate_idea', {method:'POST', body:{company_id: todo[n]}});
+    } catch(e){
+      var co = (db.companies||[]).find(function(c){ return c.id === todo[n]; });
+      failures.push((co ? co.name : todo[n]) + ': ' + (e.message || String(e)));
+    }
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea';
+
+  await renderDashboardIdeas();
+  if (failures.length) {
+    var e2 = document.getElementById('dashIdeaErr');
+    if (e2) { e2.textContent = 'Could not generate: ' + failures.join(' | '); e2.classList.remove('d-none'); }
+  }
+}
 
 // Saved content ideas for the active company, shown inside the post popup.
 // Clicking one fills the title and marks the idea used.
@@ -2835,6 +3002,7 @@ window.openPostForPlatform = async function(platKey) {
   if (cm) populateCMDropdown(cm.name);
 
   initPostSocialInfo();
+  prefillTodayIdea();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('mPost')).show();
 };
 

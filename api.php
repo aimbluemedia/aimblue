@@ -663,6 +663,30 @@ try {
             }
             break;
 
+        // Dashboard feed: today's idea for every company the user can see,
+        // plus the most recent previous ones. Company name/color come along
+        // so the dashboard can render without a second lookup.
+        case 'daily_ideas':
+            if ($method === 'GET') {
+                ensure_content_ideas($pdo);
+                $filter = user_company_filter();
+                if ($filter !== null && !$filter) json_ok(['today' => date('Y-m-d'), 'ideas' => []]);
+                $sql = "SELECT ci.*, COALESCE(ci.idea_date, DATE(ci.created_at)) AS for_date,
+                               c.name AS company_name, c.color AS company_color
+                        FROM content_ideas ci
+                        JOIN companies c ON c.id = ci.company_id";
+                $params = [];
+                if ($filter !== null) {
+                    $sql .= " WHERE ci.company_id IN (" . implode(',', array_fill(0, count($filter), '?')) . ")";
+                    $params = array_values($filter);
+                }
+                $sql .= " ORDER BY for_date DESC, ci.created_at DESC LIMIT 80";
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                json_ok(['today' => date('Y-m-d'), 'ideas' => $stmt->fetchAll()]);
+            }
+            break;
+
         case 'generate_idea':
             if ($method === 'POST') {
                 // Content managers (and admins) generate ideas for their companies
@@ -672,6 +696,18 @@ try {
                 if (!$co_id) json_error('company_id required', 422);
                 $filter = user_company_filter();
                 if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
+
+                // One idea per company per day. If today's is already there,
+                // hand it back instead of spending another API call.
+                $day = date('Y-m-d');
+                $have = $pdo->prepare("SELECT * FROM content_ideas
+                                       WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?
+                                       ORDER BY created_at DESC LIMIT 1");
+                $have->execute([$co_id, $day]);
+                if ($existing = $have->fetch()) {
+                    $existing['existing'] = true;
+                    json_ok($existing);
+                }
 
                 $co = $pdo->prepare("SELECT name, content_prompt FROM companies WHERE id = ?");
                 $co->execute([$co_id]);
@@ -703,8 +739,8 @@ try {
                 $ideaText = claude_generate($apiKey, $system, $userMsg);
 
                 $id = uid();
-                $pdo->prepare("INSERT INTO content_ideas (id, company_id, idea) VALUES (?,?,?)")
-                    ->execute([$id, $co_id, $ideaText]);
+                $pdo->prepare("INSERT INTO content_ideas (id, company_id, idea, idea_date) VALUES (?,?,?,?)")
+                    ->execute([$id, $co_id, $ideaText, $day]);
                 $row = $pdo->prepare("SELECT * FROM content_ideas WHERE id = ?");
                 $row->execute([$id]);
                 json_ok($row->fetch());
@@ -817,6 +853,15 @@ function ensure_content_ideas($pdo) {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
         if (!$pdo->query("SHOW COLUMNS FROM companies LIKE 'content_prompt'")->fetch()) {
             $pdo->exec("ALTER TABLE companies ADD COLUMN content_prompt TEXT DEFAULT NULL");
+        }
+        // One idea per company per calendar day — idea_date is the day it is for.
+        // Legacy rows are backfilled from created_at. The index is deliberately
+        // non-unique: old data may already hold duplicates for a day, and adding
+        // a UNIQUE key would then fail. One-per-day is enforced in generate_idea.
+        if (!$pdo->query("SHOW COLUMNS FROM content_ideas LIKE 'idea_date'")->fetch()) {
+            $pdo->exec("ALTER TABLE content_ideas ADD COLUMN idea_date DATE DEFAULT NULL");
+            $pdo->exec("UPDATE content_ideas SET idea_date = DATE(created_at) WHERE idea_date IS NULL");
+            $pdo->exec("CREATE INDEX idx_ci_company_date ON content_ideas (company_id, idea_date)");
         }
     } catch (Throwable $e) {
         error_log('[Content Board API] content_ideas migration failed: ' . $e->getMessage());

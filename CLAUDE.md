@@ -118,20 +118,34 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 | delete_social_login | POST | Delete social login |
 | reveal_password | GET | Decrypt and return password (?id=login_id) |
 | content_ideas | GET | Ideas for company (?id=co_id), last-used first |
-| generate_idea | POST | Claude API generates a new idea (admin/CM, own companies) |
+| daily_ideas | GET | Ideas across all visible companies + server's today date |
+| generate_idea | POST | Claude API generates today's idea (admin/CM, own companies) |
 | use_idea | POST | Mark idea used (fills Add Post title) |
 | delete_idea | POST | Delete idea |
 | claude_key_status | GET | Is a Claude API key configured (admin) |
 | save_claude_key | POST | Store Claude API key, AES-encrypted (admin) |
 
-Content Ideas: "Generate Content Idea" button in the Add Post popup
-(admin+CM) + idea suggestion chips below it. Per-company `content_prompt`
-(companies column, edited in the company modal) + all previous ideas feed a
-claude-opus-5 call (raw cURL in api.php — no Composer on shared hosting).
-The Claude API key is entered on config.php ("API settings", admin session
-required), stored AES-encrypted in settings. Ideas are marked used when the
-post is saved. The content_ideas table and content_prompt column
-self-migrate on first use.
+Content Ideas: **one idea per company per calendar day**. The "Generate
+Content Idea" button lives on the **dashboard** (admin+CM) — it generates
+today's idea for every company scheduled to post today that does not have
+one yet. Today's ideas render above the "Posting today" table; earlier
+ideas render below it. Opening Add Post for a company auto-fills the title
+with that company's idea for today (a note appears under the title field);
+the idea is marked used when the post is saved.
+
+`generate_idea` enforces the one-per-day rule server-side: if an idea
+already exists for that company today it returns it with `existing: true`
+and never calls the Claude API. `content_ideas.idea_date` (DATE) is the day
+an idea is for, backfilled from `created_at` for legacy rows; the
+`(company_id, idea_date)` index is intentionally non-unique because old
+data may already hold same-day duplicates.
+
+Per-company `content_prompt` (companies column, edited in the company
+modal) + all previous ideas feed a claude-opus-5 call (raw cURL in api.php
+— no Composer on shared hosting). The Claude API key is entered on
+config.php ("API settings", admin session required), stored AES-encrypted
+in settings. The content_ideas table, its idea_date column, and
+content_prompt all self-migrate on first use.
 
 ## Roles & Access
 | Feature | Admin | Content Manager | Sales Person |
