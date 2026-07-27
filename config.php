@@ -68,9 +68,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
+// ── Claude API key (Content Ideas) ─────────────────────────
+// Managed here on the API settings page; stored AES-encrypted in the
+// settings table with the same key derivation api.php uses to decrypt.
+function cb_encrypt_secret($plain) {
+    $key = defined('DB_NAME') ? hash('sha256', DB_NAME . 'cb_social_key_2026', true) : str_repeat('x', 32);
+    $iv  = openssl_random_pseudo_bytes(16);
+    return base64_encode($iv . openssl_encrypt($plain, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
+}
+
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+$cb_is_admin = (($_SESSION['cb_user']['role'] ?? '') === 'admin');
+$claude_error = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_claude_key') {
+    if (!$cb_is_admin) {
+        $claude_error = 'Log in as an admin to save the Claude API key.';
+    } else {
+        $ckey = trim($_POST['claude_api_key'] ?? '');
+        $cpdo = db_connect();
+        if ($ckey === '') {
+            $claude_error = 'Enter an API key.';
+        } elseif (!$cpdo) {
+            $claude_error = 'Database not connected — save the database settings first.';
+        } else {
+            try {
+                $cpdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('claude_api_key', ?)
+                                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")
+                     ->execute([cb_encrypt_secret($ckey)]);
+                header('Location: config.php?claude=saved');
+                exit;
+            } catch (Throwable $e) {
+                $claude_error = 'Could not save: ' . $e->getMessage();
+            }
+        }
+    }
+}
+
 // Show setup page if accessed directly
 if (basename($_SERVER['PHP_SELF']) === 'config.php') {
     $connected = db_connected();
+    $claude_configured = false;
+    if ($connected) {
+        try {
+            $claude_configured = (bool) db_connect()
+                ->query("SELECT setting_value FROM settings WHERE setting_key = 'claude_api_key'")
+                ->fetchColumn();
+        } catch (Throwable $e) { /* settings table may not exist yet */ }
+    }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -121,6 +166,32 @@ if (basename($_SERVER['PHP_SELF']) === 'config.php') {
       </div>
       <button type="submit" class="btn btn-at">Save &amp; test connection</button>
     </form>
+
+    <hr class="my-4">
+    <div class="form-label" style="font-weight:700;font-size:13px;color:#111827">
+      Claude API key <span style="font-weight:400;color:#9ca3af">(powers Generate Content Idea)</span>
+    </div>
+    <?php if (!$cb_is_admin): ?>
+      <div style="font-size:12px;color:#9ca3af">Log in to the dashboard as an admin to manage the Claude API key.</div>
+    <?php else: ?>
+      <div style="font-size:12px;color:<?php echo $claude_configured ? '#16a34a' : '#b45309'; ?>;margin-bottom:8px">
+        <?php echo $claude_configured
+            ? '&#10003; A key is configured. Saving a new one replaces it.'
+            : 'No key configured yet — get one at console.anthropic.com.'; ?>
+      </div>
+      <?php if (($_GET['claude'] ?? '') === 'saved'): ?>
+        <div class="alert alert-success py-2" style="font-size:13px">Claude API key saved.</div>
+      <?php endif; ?>
+      <?php if ($claude_error): ?>
+        <div class="alert alert-danger py-2" style="font-size:13px"><?php echo htmlspecialchars($claude_error); ?></div>
+      <?php endif; ?>
+      <form method="POST" class="d-flex gap-2">
+        <input type="hidden" name="action" value="save_claude_key">
+        <input class="form-control" type="password" name="claude_api_key" placeholder="sk-ant-…" autocomplete="off">
+        <button type="submit" class="btn btn-at" style="width:auto;white-space:nowrap;padding:11px 18px">Save key</button>
+      </form>
+    <?php endif; ?>
+
     <?php if ($connected): ?>
     <div class="mt-3 text-center">
       <a href="index.php" class="btn btn-outline-secondary btn-sm">Back to dashboard</a>

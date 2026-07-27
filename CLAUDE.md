@@ -124,10 +124,14 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 | claude_key_status | GET | Is a Claude API key configured (admin) |
 | save_claude_key | POST | Store Claude API key, AES-encrypted (admin) |
 
-Content Ideas: nav page for admin+CM. Per-company `content_prompt`
+Content Ideas: "Generate Content Idea" button in the Add Post popup
+(admin+CM) + idea suggestion chips below it. Per-company `content_prompt`
 (companies column, edited in the company modal) + all previous ideas feed a
 claude-opus-5 call (raw cURL in api.php — no Composer on shared hosting).
-The content_ideas table and content_prompt column self-migrate on first use.
+The Claude API key is entered on config.php ("API settings", admin session
+required), stored AES-encrypted in settings. Ideas are marked used when the
+post is saved. The content_ideas table and content_prompt column
+self-migrate on first use.
 
 ## Roles & Access
 | Feature | Admin | Content Manager | Sales Person |

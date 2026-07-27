@@ -676,7 +676,7 @@ try {
 
                 $keyEnc = get_setting($pdo, 'claude_api_key');
                 $apiKey = $keyEnc ? decrypt_pw($keyEnc) : '';
-                if (!$apiKey) json_error('No Claude API key configured. An admin can add one on the Content Ideas page.', 422);
+                if (!$apiKey) json_error('No Claude API key configured. An admin can add one under API settings.', 422);
 
                 $prev = $pdo->prepare("SELECT idea FROM content_ideas WHERE company_id = ? ORDER BY created_at DESC LIMIT 100");
                 $prev->execute([$co_id]);

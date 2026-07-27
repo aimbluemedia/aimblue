@@ -488,12 +488,6 @@ if ($connected) {
         <i class="bi bi-key" style="color:#ec4899"></i>
         <span class="hide-collapsed">Social Logins</span>
       </button>
-      <?php if ($is_admin || strpos((string)$user_role, 'content_manager') !== false): ?>
-      <button class="sb-person" id="btnNavIdeas" onclick="showContentIdeasPage()">
-        <i class="bi bi-lightbulb" style="color:#d97706"></i>
-        <span class="hide-collapsed">Content Ideas</span>
-      </button>
-      <?php endif; ?>
       <?php if ($is_admin): ?>
       <button class="sb-person" id="btnNavCM" onclick="showPeopleTable('content_manager')">
         <i class="bi bi-person-badge" style="color:#0891b2"></i>
@@ -717,6 +711,13 @@ if ($connected) {
           <div class="col-12">
             <label class="form-label">Post title *</label>
             <input class="form-control" id="pTitle" placeholder="e.g. Q3 product launch announcement">
+          </div>
+          <div class="col-12" id="pGenWrap" style="display:none">
+            <button type="button" class="btn w-100" id="btnGenPost"
+              style="background:linear-gradient(135deg,#6c47ff,#9333ea);color:#fff;font-weight:700;font-size:15px;padding:12px;border-radius:10px;border:none;box-shadow:0 4px 14px rgba(108,71,255,.35)">
+              <i class="bi bi-stars me-2"></i>Generate Content Idea
+            </button>
+            <div id="pGenErr" class="alert alert-danger d-none mt-2 mb-0" style="font-size:12px"></div>
           </div>
           <div class="col-12" id="pIdeaBox" style="display:none">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:6px">
@@ -2476,21 +2477,45 @@ document.getElementById('btnSavePost').onclick=async()=>{
   btn.disabled=true;
   document.getElementById('pErrMsg').classList.add('d-none');
 
-  if(editPostId){
-    co.posts=co.posts.map(p=>p.id===editPostId?post:p);
-  }else{
-    co.posts.push(post);
+  try {
+    // Persist through the API — the old handler only wrote localStorage,
+    // so posts silently vanished on the next page load.
+    await apiCall('save_post', {method:'POST', body:{
+      id:         post.id,
+      company_id: co.id,
+      title:      post.title,
+      platform:   post.platform,
+      status:     post.status,
+      date:       post.date || null,
+      assignee:   post.assignee || null,
+      post_url:   post.notes || null,
+    }});
+    if (_pendingIdeaId) {
+      apiCall('use_idea', {method:'POST', body:{id: _pendingIdeaId}}).catch(function(){});
+      _pendingIdeaId = null;
+    }
+    if(editPostId){
+      co.posts=co.posts.map(p=>p.id===editPostId?post:p);
+    }else{
+      co.posts.push(post);
+    }
+    save();
+    bootstrap.Modal.getInstance('#mPost').hide();
+    renderSidebar(); renderMain();
+  } catch(e) {
+    document.getElementById('pErrMsg').textContent = e.message || String(e);
+    document.getElementById('pErrMsg').classList.remove('d-none');
+  } finally {
+    btn.disabled=false;
   }
-  save(); btn.disabled=false;
-  bootstrap.Modal.getInstance('#mPost').hide();
-  renderSidebar(); renderMain();
 };
 
 window.confirmDeletePost=function(postId){
   document.getElementById('confirmMsg').textContent='Delete this post? This cannot be undone.';
   confirmCb=async()=>{
     const co=getCo(); if(!co)return;
-    const post=co.posts.find(p=>p.id===postId);
+    try { await apiCall('delete_post', {method:'POST', body:{id: postId}}); }
+    catch(e){ alert('Could not delete: ' + e.message); return; }
     co.posts=co.posts.filter(p=>p.id!==postId);
     save(); renderSidebar(); renderMain();
   };
@@ -2685,9 +2710,45 @@ document.getElementById('pSocialToggle').addEventListener('click', function(){
 function initPostSocialInfo(){
   document.getElementById('pSocialBody').style.display = 'none';
   document.getElementById('pSocialToggle').innerHTML = 'Show <i class="bi bi-chevron-down"></i>';
+  _pendingIdeaId = null;
+  var gw = document.getElementById('pGenWrap');
+  if (gw) gw.style.display = canManagePosts() ? '' : 'none';
+  var ge = document.getElementById('pGenErr');
+  if (ge) ge.classList.add('d-none');
+  // Default the date to today when the field is empty (new posts)
+  var pd = document.getElementById('pDate');
+  if (pd && !pd.value) {
+    var t = new Date();
+    pd.value = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+  }
   updatePostSocialInfo();
   updatePostIdeas();
 }
+
+// The idea currently sitting in the title box; marked used when the post
+// is actually saved (cancelling the modal keeps the idea available).
+var _pendingIdeaId = null;
+
+document.getElementById('btnGenPost').addEventListener('click', async function(){
+  var co = getCo();
+  var err = document.getElementById('pGenErr');
+  err.classList.add('d-none');
+  if (!co) { err.textContent = 'Open a company first.'; err.classList.remove('d-none'); return; }
+  var btn = this;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat spin-sm me-2"></i>Generating…';
+  try {
+    var idea = await apiCall('generate_idea', {method:'POST', body:{company_id: co.id}});
+    document.getElementById('pTitle').value = idea.idea;
+    _pendingIdeaId = idea.id;
+  } catch(e){
+    err.textContent = e.message || String(e);
+    err.classList.remove('d-none');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea';
+  }
+});
 
 // Saved content ideas for the active company, shown inside the post popup.
 // Clicking one fills the title and marks the idea used.
@@ -2712,9 +2773,7 @@ async function updatePostIdeas(){
         var idea = unused.find(function(x){ return x.id === btn.dataset.pidea; });
         if (!idea) return;
         document.getElementById('pTitle').value = idea.idea;
-        apiCall('use_idea', {method:'POST', body:{id: idea.id}}).catch(function(){});
-        btn.remove();
-        if (!chips.children.length) box.style.display = 'none';
+        _pendingIdeaId = idea.id; // marked used when the post is saved
       };
     });
     box.style.display = '';
@@ -3329,154 +3388,6 @@ window.showUsersPage = async function(){
   } catch(e) {
     wrap.innerHTML='<div class="state-box"><i class="bi bi-exclamation-triangle text-danger" style="font-size:32px"></i><strong>Error</strong><p>'+e.message+'</p></div>';
   }
-};
-
-// ══════════ CONTENT IDEAS PAGE ══════════
-var _ideasCoId = null;
-
-window.showContentIdeasPage = async function(){
-  if (!isAdminUser() && !canManagePosts()) return; // admin + content managers only
-  activeId = null;
-  document.querySelectorAll('.co-btn,.sb-person').forEach(function(b){ b.classList.remove('active'); });
-  var nb = document.getElementById('btnNavIdeas'); if (nb) nb.classList.add('active');
-  document.getElementById('tbTitle').textContent = 'Content Ideas';
-  document.getElementById('coDetailBar').classList.add('hidden');
-  var pb = document.getElementById('platformBubbles'); if (pb) pb.style.display = 'none';
-  ['tbBadge','tbSyncBadge'].forEach(function(id){ var el = document.getElementById(id); if (el) el.style.display = 'none'; });
-  ['btnAddCompanyTop','btnAddPersonTop','btnAddPost','btnEditCo','btnDelCo','btnPosting'].forEach(function(id){
-    var el = document.getElementById(id); if (el) el.style.display = 'none';
-  });
-
-  var wrap = document.getElementById('content');
-  var cos = db.companies || [];
-  if (!_ideasCoId || !cos.some(function(c){ return c.id === _ideasCoId; })) {
-    _ideasCoId = cos.length ? cos[0].id : null;
-  }
-
-  wrap.innerHTML =
-    '<div id="ideasKeyPanel"></div>'+
-    '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:14px">'+
-      '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'+
-        '<label style="font-size:13px;font-weight:600;color:#0f172a;margin:0">Company</label>'+
-        '<select class="form-select form-select-sm" id="ideasCoSel" style="max-width:280px">'+
-          cos.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===_ideasCoId?' selected':'')+'>'+esc(c.name)+'</option>'; }).join('')+
-        '</select>'+
-        '<button class="btn btn-sm btn-at" id="btnGenIdea" style="font-weight:600"><i class="bi bi-stars me-1"></i>Generate idea</button>'+
-        '<span id="ideasHint" style="font-size:12px;color:#94a3b8"></span>'+
-      '</div>'+
-      '<div class="alert alert-danger d-none mt-3 mb-0" id="ideasErr" style="font-size:13px"></div>'+
-    '</div>'+
-    '<div id="ideasList"></div>';
-
-  // Admin: Claude API key panel (stored encrypted server-side)
-  if (isAdminUser()) {
-    try {
-      var ks = await apiCall('claude_key_status');
-      var kp = document.getElementById('ideasKeyPanel');
-      if (kp) kp.innerHTML =
-        '<div style="background:'+(ks.configured?'#f0fdf4;border:1px solid #bbf7d0':'#fffbeb;border:1px solid #fde68a')+';border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px">'+
-          (ks.configured
-            ? '<i class="bi bi-check-circle me-1" style="color:#16a34a"></i>Claude API key configured. <a href="javascript:void(0)" onclick="document.getElementById(\'ideasKeyForm\').style.display=\'\'" style="font-size:12px">Replace key</a>'
-            : '<i class="bi bi-exclamation-triangle me-1" style="color:#d97706"></i><strong>No Claude API key yet.</strong> Add one to enable idea generation (get a key at console.anthropic.com).')+
-          '<div id="ideasKeyForm" style="display:'+(ks.configured?'none':'flex')+';gap:8px;margin-top:10px;max-width:520px" class="d-flex">'+
-            '<input type="password" class="form-control form-control-sm" id="ideasKeyInput" placeholder="sk-ant-…" autocomplete="off">'+
-            '<button class="btn btn-sm btn-at" id="btnSaveClaudeKey">Save</button>'+
-          '</div>'+
-        '</div>';
-      var skb = document.getElementById('btnSaveClaudeKey');
-      if (skb) skb.onclick = async function(){
-        var v = document.getElementById('ideasKeyInput').value.trim();
-        if (!v) return;
-        this.disabled = true;
-        try { await apiCall('save_claude_key', {method:'POST', body:{api_key: v}}); showContentIdeasPage(); }
-        catch(e){ alert(e.message); this.disabled = false; }
-      };
-    } catch(e) { /* non-fatal */ }
-  }
-
-  var sel = document.getElementById('ideasCoSel');
-  if (sel) sel.onchange = function(){ _ideasCoId = this.value; renderIdeasList(); };
-  var gen = document.getElementById('btnGenIdea');
-  if (gen) gen.onclick = generateContentIdea;
-  renderIdeasList();
-};
-
-async function renderIdeasList(){
-  var list = document.getElementById('ideasList');
-  if (!list) return;
-  if (!_ideasCoId){
-    list.innerHTML = '<div class="state-box"><i class="bi bi-lightbulb" style="font-size:40px;color:#d97706"></i><strong>No companies yet</strong></div>';
-    return;
-  }
-  list.innerHTML = '<div style="padding:16px;color:#94a3b8;font-size:13px"><i class="bi bi-arrow-repeat spin-sm me-1"></i>Loading ideas…</div>';
-  try {
-    var ideas = await apiCall('content_ideas', {id: _ideasCoId});
-    if (!ideas.length){
-      list.innerHTML = '<div class="state-box"><i class="bi bi-lightbulb" style="font-size:40px;color:#d97706"></i><strong>No ideas yet</strong><p>Click <strong>Generate idea</strong> to create the first one for this company.</p></div>';
-      return;
-    }
-    list.innerHTML = ideas.map(function(i){
-      var used = !!i.used_at;
-      return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:10px;display:flex;gap:14px;align-items:flex-start'+(used?';opacity:.65':'')+'">'+
-        '<i class="bi bi-lightbulb'+(used?'':'-fill')+'" style="color:#d97706;font-size:18px;margin-top:1px"></i>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:14px;color:#0f172a">'+esc(i.idea)+'</div>'+
-          '<div style="font-size:11px;color:#94a3b8;margin-top:5px">'+
-            (used ? '<span style="color:#16a34a"><i class="bi bi-check-circle me-1"></i>Used '+esc(String(i.used_at).slice(0,16))+'</span>' : 'Created '+esc(String(i.created_at).slice(0,16)))+
-          '</div>'+
-        '</div>'+
-        (used ? '' : '<button class="btn btn-sm btn-at" data-use-idea="'+esc(i.id)+'" style="font-size:12px;white-space:nowrap"><i class="bi bi-plus-lg me-1"></i>Use in post</button>')+
-        '<button class="btn btn-sm btn-outline-danger" data-del-idea="'+esc(i.id)+'" style="font-size:12px;padding:3px 8px"><i class="bi bi-trash"></i></button>'+
-      '</div>';
-    }).join('');
-    list.querySelectorAll('[data-use-idea]').forEach(function(btn){
-      btn.onclick = function(){
-        var idea = ideas.find(function(x){ return x.id === btn.dataset.useIdea; });
-        if (idea) useContentIdea(idea.id, idea.company_id, idea.idea);
-      };
-    });
-    list.querySelectorAll('[data-del-idea]').forEach(function(btn){
-      btn.onclick = async function(){
-        if (!confirm('Delete this idea?')) return;
-        try { await apiCall('delete_idea', {method:'POST', body:{id: btn.dataset.delIdea}}); renderIdeasList(); }
-        catch(e){ alert(e.message); }
-      };
-    });
-  } catch(e){
-    list.innerHTML = '<div class="state-box"><i class="bi bi-exclamation-triangle text-danger" style="font-size:32px"></i><strong>Error</strong><p>'+esc(e.message)+'</p></div>';
-  }
-}
-
-async function generateContentIdea(){
-  var btn = document.getElementById('btnGenIdea');
-  var err = document.getElementById('ideasErr');
-  var hint = document.getElementById('ideasHint');
-  if (!_ideasCoId || !btn) return;
-  err.classList.add('d-none');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="bi bi-arrow-repeat spin-sm me-1"></i>Generating…';
-  if (hint) hint.textContent = 'Claude is reading the company prompt and previous ideas…';
-  try {
-    await apiCall('generate_idea', {method:'POST', body:{company_id: _ideasCoId}});
-    renderIdeasList();
-  } catch(e){
-    err.textContent = e.message || String(e);
-    err.classList.remove('d-none');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-stars me-1"></i>Generate idea';
-    if (hint) hint.textContent = '';
-  }
-}
-
-// Mark the idea used and open the Add Post popup with it as the title
-window.useContentIdea = async function(id, coId, text){
-  try { await apiCall('use_idea', {method:'POST', body:{id: id}}); } catch(e){ /* still usable */ }
-  selectCo(coId);
-  var addBtn = document.getElementById('btnAddPost');
-  if (addBtn) addBtn.click();
-  var t = document.getElementById('pTitle');
-  if (t) t.value = text;
 };
 
 // ══════════ SOCIAL LOGINS PAGE ══════════
