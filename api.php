@@ -318,10 +318,14 @@ try {
                 ");
                 $stmt->execute([$id,$role,$name,$email?:null,$notes]);
 
-                // Update company links
-                $pdo->prepare("DELETE FROM person_companies WHERE person_id = ?")->execute([$id]);
-                $ins = $pdo->prepare("INSERT IGNORE INTO person_companies (person_id, company_id) VALUES (?,?)");
-                foreach ($companyIds as $cid) $ins->execute([$id, $cid]);
+                // Update company links only when the client actually sent
+                // them — the person modal is view-only for assignments now,
+                // and an absent key must never wipe existing links.
+                if (array_key_exists('company_ids', $body)) {
+                    $pdo->prepare("DELETE FROM person_companies WHERE person_id = ?")->execute([$id]);
+                    $ins = $pdo->prepare("INSERT IGNORE INTO person_companies (person_id, company_id) VALUES (?,?)");
+                    foreach ($companyIds as $cid) $ins->execute([$id, $cid]);
+                }
 
                 // Link this person to a user account (people are picked from
                 // the users dropdown). Sets cm_person_id / sp_person_id and

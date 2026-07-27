@@ -840,7 +840,7 @@ if ($connected) {
           </div>
         </div>
         <div class="mb-3">
-          <label class="form-label">Companies / Clients <span class="text-muted fw-normal">(select all that apply)</span></label>
+          <label class="form-label">Companies / Clients <span class="text-muted fw-normal">(view only — assign from the Companies page or Edit Company popup)</span></label>
           <div id="personCompanyChecks" style="max-height:140px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;background:#f8fafc;display:flex;flex-direction:column;gap:6px;">
             <span style="font-size:12px;color:#94a3b8">No companies added yet</span>
           </div>
@@ -1292,6 +1292,18 @@ async function populateCoCMSPDropdowns(co){
       (db.people||[]).filter(function(p){ return p.role==='sales_person'; }).map(function(p){ return {pid:p.id, label:p.name}; })
     );
   }
+  // Warn when picking a different CM/SP for a company that already has one.
+  function warnReassign(sel, curId, roleLabel){
+    sel.onchange = function(){
+      if(curId && this.value && this.value !== curId){
+        var cur = (db.people||[]).find(function(p){ return p.id === curId; });
+        alert('This company already has a ' + roleLabel + ' assigned' +
+              (cur ? ': ' + cur.name : '') + '.\nSaving will replace them.');
+      }
+    };
+  }
+  warnReassign(cmSel, curCM, 'content manager');
+  warnReassign(spSel, curSP, 'sales person');
 }
 
 window.openEditCompanyModal = function openEditCompanyModal(id){
@@ -2027,14 +2039,19 @@ function populatePersonCompanyChecks(selectedIds){
     wrap.innerHTML = '<span style="font-size:12px;color:#94a3b8">No companies added yet</span>';
     return;
   }
+  // View-only: company assignments are managed from the Companies page /
+  // Edit Company popup (and the Users page), not from this modal.
   const ids = selectedIds || [];
-  wrap.innerHTML = companies.map(function(co){
-    const checked = ids.includes(co.id) ? 'checked' : '';
-    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#0f172a">'+
-      '<input type="checkbox" value="'+co.id+'" '+checked+' class="person-co-check" style="width:15px;height:15px;accent-color:'+co.color+'">'+
+  const linked = companies.filter(function(co){ return ids.includes(co.id); });
+  if(!linked.length){
+    wrap.innerHTML = '<span style="font-size:12px;color:#94a3b8">Not assigned to any companies yet — assign from the Companies page.</span>';
+    return;
+  }
+  wrap.innerHTML = linked.map(function(co){
+    return '<span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:20px;padding:4px 12px">'+
       '<span style="width:10px;height:10px;border-radius:3px;background:'+co.color+';display:inline-block;flex-shrink:0"></span>'+
       esc(co.name)+
-    '</label>';
+    '</span>';
   }).join('');
 }
 
@@ -2549,21 +2566,23 @@ document.getElementById('btnSavePerson').onclick = async function(){
     const usr      = _personUsers.find(u => u.id === userId);
     if (!usr && !existing) throw new Error('Select a user — accounts are created on the Users page.');
 
+    // company_ids deliberately NOT sent — assignments are view-only here
+    // and managed from the company popup / Users page.
     const body = {
-      id:          editing || undefined,
-      role:        _personRole,
-      name:        usr ? (usr.full_name || usr.username) : existing.name,
-      email:       usr ? (usr.email || '') : (existing.email || ''),
-      notes:       document.getElementById('personNotes').value.trim(),
-      company_ids: getPersonCompanyIds(),
-      user_id:     usr ? usr.id : undefined,
+      id:      editing || undefined,
+      role:    _personRole,
+      name:    usr ? (usr.full_name || usr.username) : existing.name,
+      email:   usr ? (usr.email || '') : (existing.email || ''),
+      notes:   document.getElementById('personNotes').value.trim(),
+      user_id: usr ? usr.id : undefined,
     };
     const res = await apiCall('save_person', { method:'POST', body });
 
+    const existingIds = existing ? (existing.companyIds || existing.company_ids || []) : [];
     const local = {
       id: (res && res.id) || editing, role: body.role, name: body.name,
       email: body.email, notes: body.notes,
-      companyIds: body.company_ids, company_ids: body.company_ids,
+      companyIds: existingIds, company_ids: existingIds,
     };
     if (editing) {
       const idx = db.people.findIndex(p => p.id === editing);
