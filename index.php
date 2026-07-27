@@ -569,6 +569,7 @@ if ($connected) {
     <div class="co-detail-bar hidden" id="coDetailBar"></div>
     <div id="platformBubbles-date" style="display:none;padding:14px 20px 0;margin-top:10px;margin-left:20px;font-size:13px;font-weight:600;color:#64748b;"></div>
     <div class="platform-bubbles" id="platformBubbles" style="display:none"></div>
+    <div id="coIdeaWrap" style="display:none;padding:0 20px;margin-top:14px"></div>
     <div class="content" id="content">
       <div class="state-box">
         <i class="bi bi-building"></i>
@@ -1221,18 +1222,12 @@ function showDashboard(){
   wrap.innerHTML =
     feeCard +
     '<div id="dashCalContainer"></div>' +
-    '<div id="dashIdeaWrap"></div>' +
-    todaySection +
-    '<div id="dashPrevIdeasWrap"></div>';
+    todaySection;
 
   // Wire today company row clicks
   wrap.querySelectorAll('tr[data-coid]').forEach(function(tr){
     tr.addEventListener('click', function(){ selectCo(tr.dataset.coid); });
   });
-
-  // Content ideas — one per company per day, generated from here
-  window._todayCoIds = todayCompanies.map(function(c){ return c.id; });
-  renderDashboardIdeas();
 
   // Render calendar
   const now = new Date();
@@ -1359,6 +1354,7 @@ function showAllCompanies(){
   document.getElementById('tbTitle').textContent = 'Companies';
   document.getElementById('coDetailBar').classList.add('hidden');
   const _pb=document.getElementById('platformBubbles'); if(_pb) _pb.style.display='none';
+  hideCompanyIdeas();
   const _pd=document.getElementById('platformBubbles-date'); if(_pd) _pd.style.display='none';
   ['tbBadge','tbSyncBadge'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('tbActions').style.display = 'flex';
@@ -1439,6 +1435,7 @@ function showPeopleTable(role){
   document.getElementById('tbTitle').textContent = isCM ? 'Content Managers' : 'Sales People';
   document.getElementById('coDetailBar').classList.add('hidden');
   const _pb=document.getElementById('platformBubbles'); if(_pb) _pb.style.display='none';
+  hideCompanyIdeas();
   const _pd=document.getElementById('platformBubbles-date'); if(_pd) _pd.style.display='none';
   ['tbBadge','tbSyncBadge'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('tbActions').style.display = 'flex';
@@ -1873,6 +1870,7 @@ function renderMain(){
 
   document.getElementById('tbTitle').textContent=co.name;
   document.getElementById('tbActions').style.display='flex';  renderPlatformBubbles(co);
+  renderCompanyIdeas(co);
   // Restore stat card labels for company view
   document.querySelector('.sc:nth-child(1) .sc-lbl').textContent = 'Total';
   document.querySelector('.sc.pub .sc-lbl').innerHTML = '<i class="bi bi-check-circle me-1"></i>Published';
@@ -2796,15 +2794,20 @@ async function prefillTodayIdea(){
   }
 }
 
-// ── Dashboard: today's idea per company + previous ideas ──
-async function renderDashboardIdeas(){
-  var top  = document.getElementById('dashIdeaWrap');
-  var prevW = document.getElementById('dashPrevIdeasWrap');
-  if (!top || !prevW) return;
-  if (!canManagePosts()) { top.innerHTML = ''; prevW.innerHTML = ''; return; }
+// ── Company page: today's idea for THIS company + its previous ideas ──
+function hideCompanyIdeas(){
+  var w = document.getElementById('coIdeaWrap');
+  if (w) { w.style.display = 'none'; w.innerHTML = ''; }
+}
+
+async function renderCompanyIdeas(co){
+  var w = document.getElementById('coIdeaWrap');
+  if (!w) return;
+  if (!co || !canManagePosts()) { hideCompanyIdeas(); return; }
+  w.style.display = '';
 
   var card = function(inner){
-    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-top:16px">'+inner+'</div>';
+    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">'+inner+'</div>';
   };
   var hdr = function(icon, text, right){
     return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc">'+
@@ -2812,129 +2815,102 @@ async function renderDashboardIdeas(){
       (right||'')+'</div>';
   };
 
-  top.innerHTML = card(hdr('bi-stars','Content ideas for today','') +
+  w.innerHTML = card(hdr('bi-stars','Content idea for today','') +
     '<div style="padding:16px;color:#94a3b8;font-size:13px">Loading ideas…</div>');
 
-  try { await loadDailyIdeas(true); }
+  var ideas;
+  try { ideas = await apiCall('content_ideas', {id: co.id}); }
   catch(e){
-    top.innerHTML = card(hdr('bi-stars','Content ideas for today','') +
+    w.innerHTML = card(hdr('bi-stars','Content idea for today','') +
       '<div style="padding:16px;color:#b91c1c;font-size:13px">Could not load content ideas: '+esc(e.message||String(e))+'</div>');
-    prevW.innerHTML = '';
     return;
   }
+  // The view may have moved on while the request was in flight
+  var still = getCo();
+  if (!still || still.id !== co.id) return;
 
-  var today = _dailyIdeas.today || todayStr();
-  var all   = _dailyIdeas.ideas || [];
-  var todays = all.filter(function(i){ return ideaForDate(i) === today; });
-  var prev   = all.filter(function(i){ return ideaForDate(i) !== today; });
-
-  var coIds = window._todayCoIds || [];
-  var missing = coIds.filter(function(cid){
-    return !todays.some(function(i){ return i.company_id === cid; });
-  });
+  var today = todayStr();
+  ideas = ideas || [];
+  var todays = ideas.filter(function(i){ return ideaForDate(i) === today; });
+  var prev   = ideas.filter(function(i){ return ideaForDate(i) !== today; })
+                    .sort(function(a,b){ return ideaForDate(b).localeCompare(ideaForDate(a)); });
 
   function ideaRow(i, showDate){
-    var co = (db.companies||[]).find(function(c){ return c.id === i.company_id; });
-    var color = i.company_color || (co ? co.color : '#94a3b8');
-    var name  = i.company_name || (co ? co.name : 'Company');
     return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 16px;border-bottom:1px solid #f1f5f9">'+
-      '<span style="flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:'+esc(color)+';margin-top:5px"></span>'+
+      '<span style="flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:'+esc(co.color||'#94a3b8')+';margin-top:5px"></span>'+
       '<div style="flex:1;min-width:0">'+
-        '<div style="font-size:11px;font-weight:700;color:#64748b">'+esc(name)+
-          (showDate ? ' <span style="font-weight:400;color:#cbd5e1">· '+esc(ideaForDate(i))+'</span>' : '')+
-          (i.used_at ? ' <span style="color:#16a34a;font-weight:600">· used</span>' : '')+
-        '</div>'+
+        (showDate || i.used_at
+          ? '<div style="font-size:11px;font-weight:700;color:#64748b">'+
+              (showDate ? esc(ideaForDate(i)) : '')+
+              (i.used_at ? (showDate?' · ':'')+'<span style="color:#16a34a">used</span>' : '')+
+            '</div>'
+          : '')+
         '<div style="font-size:13px;color:#0f172a;line-height:1.45">'+esc(i.idea)+'</div>'+
       '</div>'+
-      '<button class="btn btn-sm" data-useidea="'+esc(i.company_id)+'" '+
+      '<button class="btn btn-sm" data-useidea="'+esc(i.id)+'" '+
         'style="flex:0 0 auto;font-size:11px;font-weight:600;background:#faf5ff;border:1px solid #e9d5ff;color:#6c47ff;border-radius:7px;white-space:nowrap">'+
         '<i class="bi bi-plus-lg me-1"></i>Use in a post</button>'+
     '</div>';
   }
 
-  var genBtn = '<button class="btn" id="btnGenDayIdeas" '+
+  var genBtn = todays.length ? '' :
+    '<button class="btn" id="btnGenCoIdea" '+
     'style="background:linear-gradient(135deg,#6c47ff,#9333ea);color:#fff;font-weight:700;font-size:13px;padding:8px 16px;border-radius:9px;border:none;box-shadow:0 4px 14px rgba(108,71,255,.35);white-space:nowrap">'+
     '<i class="bi bi-stars me-2"></i>Generate Content Idea</button>';
 
   var body = todays.length
-    ? todays.map(function(i){ return ideaRow(i, false); }).join('')
-    : '<div style="padding:16px;color:#94a3b8;font-size:13px">No idea generated for today yet — press <strong>Generate Content Idea</strong> to create one for each company posting today.</div>';
+    ? todays.map(function(i){ return ideaRow(i, false); }).join('')+
+      '<div style="padding:10px 16px;font-size:12px;color:#16a34a;background:#f0fdf4">'+
+        'Today&rsquo;s idea is ready — only one idea is generated per company per day.</div>'
+    : '<div style="padding:16px;color:#94a3b8;font-size:13px">'+
+        'No idea for today yet — press <strong>Generate Content Idea</strong> to create one for '+esc(co.name)+'.</div>';
 
-  var footNote = '';
-  if (todays.length && missing.length) {
-    footNote = '<div style="padding:10px 16px;font-size:12px;color:#b45309;background:#fffbeb">'+
-      missing.length+' compan'+(missing.length===1?'y':'ies')+' posting today still need an idea.</div>';
-  } else if (todays.length && !missing.length && coIds.length) {
-    footNote = '<div style="padding:10px 16px;font-size:12px;color:#16a34a;background:#f0fdf4">'+
-      'Every company posting today has its idea. Only one idea is generated per company per day.</div>';
-  }
-
-  top.innerHTML = card(
-    hdr('bi-stars','Content ideas for today', genBtn) +
-    body + footNote +
-    '<div id="dashIdeaErr" class="d-none" style="padding:10px 16px;font-size:12px;color:#b91c1c;background:#fef2f2"></div>'
-  );
-
-  prevW.innerHTML = prev.length
-    ? card(hdr('bi-clock-history','Previous content ideas',
-        '<span style="background:#e2e8f0;color:#475569;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600">'+prev.length+'</span>') +
-        prev.slice(0, 20).map(function(i){ return ideaRow(i, true); }).join(''))
+  var prevBlock = prev.length
+    ? '<div style="margin-top:14px">'+card(
+        hdr('bi-clock-history','Previous content ideas',
+          '<span style="background:#e2e8f0;color:#475569;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600">'+prev.length+'</span>')+
+        prev.slice(0, 20).map(function(i){ return ideaRow(i, true); }).join(''))+'</div>'
     : '';
 
-  // Wire "Use in a post" — opens the company then the Add post popup
-  [top, prevW].forEach(function(root){
-    root.querySelectorAll('[data-useidea]').forEach(function(btn){
-      btn.onclick = function(){
-        selectCo(btn.dataset.useidea);
-        setTimeout(function(){ document.getElementById('btnAddPost').click(); }, 250);
-      };
-    });
+  w.innerHTML =
+    card(hdr('bi-stars','Content idea for today', genBtn) + body +
+      '<div id="coIdeaErr" style="display:none;padding:10px 16px;font-size:12px;color:#b91c1c;background:#fef2f2"></div>') +
+    prevBlock;
+
+  w.querySelectorAll('[data-useidea]').forEach(function(btn){
+    btn.onclick = function(){
+      var idea = ideas.find(function(x){ return x.id === btn.dataset.useidea; });
+      if (!idea) return;
+      document.getElementById('btnAddPost').click();
+      setTimeout(function(){
+        document.getElementById('pTitle').value = idea.idea;
+        _pendingIdeaId = idea.id;
+      }, 60);
+    };
   });
 
-  var gb = document.getElementById('btnGenDayIdeas');
-  if (gb) gb.onclick = generateTodayIdeas;
+  var gb = document.getElementById('btnGenCoIdea');
+  if (gb) gb.onclick = function(){ generateCompanyIdea(co.id); };
 }
 
-// Generates today's idea for every company posting today that lacks one.
-async function generateTodayIdeas(){
-  var btn = document.getElementById('btnGenDayIdeas');
-  var err = document.getElementById('dashIdeaErr');
-  var coIds = window._todayCoIds || [];
-  if (err) err.classList.add('d-none');
-
-  if (!coIds.length) {
-    if (err) { err.textContent = 'No companies are scheduled to post today.'; err.classList.remove('d-none'); }
-    return;
+// Generates today's single idea for one company.
+async function generateCompanyIdea(coId){
+  var btn = document.getElementById('btnGenCoIdea');
+  var err = document.getElementById('coIdeaErr');
+  if (err) err.style.display = 'none';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>Generating…';
   }
-  var todayD = (_dailyIdeas && _dailyIdeas.today) || todayStr();
-  var todo = coIds.filter(function(cid){
-    return !(_dailyIdeas && (_dailyIdeas.ideas||[]).some(function(i){
-      return i.company_id === cid && ideaForDate(i) === todayD;
-    }));
-  });
-  if (!todo.length) {
-    if (err) { err.textContent = 'Today’s ideas are already generated — only one per company per day.'; err.classList.remove('d-none'); }
-    return;
-  }
-
-  btn.disabled = true;
-  var failures = [];
-  for (var n = 0; n < todo.length; n++) {
-    btn.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>Generating ' + (n+1) + ' of ' + todo.length + '…';
-    try {
-      await apiCall('generate_idea', {method:'POST', body:{company_id: todo[n]}});
-    } catch(e){
-      var co = (db.companies||[]).find(function(c){ return c.id === todo[n]; });
-      failures.push((co ? co.name : todo[n]) + ': ' + (e.message || String(e)));
-    }
-  }
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea';
-
-  await renderDashboardIdeas();
-  if (failures.length) {
-    var e2 = document.getElementById('dashIdeaErr');
-    if (e2) { e2.textContent = 'Could not generate: ' + failures.join(' | '); e2.classList.remove('d-none'); }
+  try {
+    await apiCall('generate_idea', {method:'POST', body:{company_id: coId}});
+    _dailyIdeas = null;                      // post popup re-reads it
+    var co = (db.companies||[]).find(function(c){ return c.id === coId; });
+    await renderCompanyIdeas(co || getCo());
+  } catch(e){
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea'; }
+    var e2 = document.getElementById('coIdeaErr');
+    if (e2) { e2.textContent = e.message || String(e); e2.style.display = ''; }
   }
 }
 
@@ -3332,6 +3308,7 @@ window.showUsersPage = async function(){
   document.getElementById('tbTitle').textContent = 'Users';
   document.getElementById('coDetailBar').classList.add('hidden');
   var pb=document.getElementById('platformBubbles'); if(pb) pb.style.display='none';
+  hideCompanyIdeas();
   ['tbBadge','tbSyncBadge'].forEach(function(id){document.getElementById(id).style.display='none';});
   document.getElementById('tbActions').style.display='flex';
   ['btnAddCompanyTop','btnAddPersonTop','btnAddPost','btnEditCo','btnDelCo'].forEach(function(id){
@@ -3583,6 +3560,7 @@ window.showSocialLoginsPage = async function(){
   document.getElementById('tbTitle').textContent = 'Social Media Logins';
   document.getElementById('coDetailBar').classList.add('hidden');
   var pb=document.getElementById('platformBubbles'); if(pb) pb.style.display='none';
+  hideCompanyIdeas();
   ['tbBadge','tbSyncBadge'].forEach(function(id){document.getElementById(id).style.display='none';});
   document.getElementById('tbActions').style.display='flex';
   ['btnAddCompanyTop','btnAddPersonTop','btnAddPost','btnEditCo','btnDelCo'].forEach(function(id){

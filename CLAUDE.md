@@ -126,12 +126,13 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 | save_claude_key | POST | Store Claude API key, AES-encrypted (admin) |
 
 Content Ideas: **one idea per company per calendar day**. The "Generate
-Content Idea" button lives on the **dashboard** (admin+CM) — it generates
-today's idea for every company scheduled to post today that does not have
-one yet. Today's ideas render above the "Posting today" table; earlier
-ideas render below it. Opening Add Post for a company auto-fills the title
-with that company's idea for today (a note appears under the title field);
-the idea is marked used when the post is saved.
+Content Idea" button lives on the **company post page** (admin+CM), in a
+panel between the platform cards and the posts list. It generates today's
+single idea for that company; once today's idea exists the button is
+replaced by the idea itself, and previous ideas for that company list
+below it. Opening Add Post auto-fills the title with that company's idea
+for today (a note appears under the title field); the idea is marked used
+when the post is saved. The dashboard carries no content-idea UI.
 
 `generate_idea` enforces the one-per-day rule server-side: if an idea
 already exists for that company today it returns it with `existing: true`
