@@ -672,13 +672,21 @@ try {
                 ensure_content_ideas($pdo);
                 $filter = user_company_filter();
                 if ($filter !== null && !$filter) json_ok(['today' => date('Y-m-d'), 'ideas' => []]);
+                // Optional single-company scope — the company page uses this so
+                // it reads the SERVER's today rather than the browser's, which
+                // disagree whenever the two are in different timezones.
+                $only = $_GET['company_id'] ?? '';
+                if ($only && $filter !== null && !in_array($only, $filter)) json_error('Forbidden', 403);
                 $sql = "SELECT ci.*, COALESCE(ci.idea_date, DATE(ci.created_at)) AS for_date,
                                c.name AS company_name, c.color AS company_color
                         FROM content_ideas ci
                         JOIN companies c ON c.id = ci.company_id
                         WHERE ci.discarded_at IS NULL";
                 $params = [];
-                if ($filter !== null) {
+                if ($only) {
+                    $sql .= " AND ci.company_id = ?";
+                    $params[] = $only;
+                } elseif ($filter !== null) {
                     $sql .= " AND ci.company_id IN (" . implode(',', array_fill(0, count($filter), '?')) . ")";
                     $params = array_values($filter);
                 }

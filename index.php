@@ -2821,22 +2821,27 @@ async function renderCompanyIdeas(co){
       (right||'')+'</div>';
   };
 
-  w.innerHTML = card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()),'') +
+  var hdrTitle = function(day){ return 'Content idea for today: ' + fmtDateUS(day || todayStr()); };
+  w.innerHTML = card(hdr('bi-stars', hdrTitle(),'') +
     '<div style="padding:16px;color:#94a3b8;font-size:13px">Loading ideas…</div>');
 
-  var ideas;
-  try { ideas = await apiCall('content_ideas', {id: co.id}); }
+  // The SERVER decides what "today" is — generate_idea stamps idea_date with
+  // its own date, so using the browser's would mismatch across timezones and
+  // leave Regenerate silently replacing a different day's idea.
+  var res, ideas, today;
+  try {
+    res = await apiCall('daily_ideas', {company_id: co.id});
+    today = res.today || todayStr();
+    ideas = res.ideas || [];
+  }
   catch(e){
-    w.innerHTML = card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()),'') +
+    w.innerHTML = card(hdr('bi-stars', hdrTitle(),'') +
       '<div style="padding:16px;color:#b91c1c;font-size:13px">Could not load content ideas: '+esc(e.message||String(e))+'</div>');
     return;
   }
   // The view may have moved on while the request was in flight
   var still = getCo();
   if (!still || still.id !== co.id) return;
-
-  var today = todayStr();
-  ideas = ideas || [];
   var todays = ideas.filter(function(i){ return ideaForDate(i) === today; });
   var prev   = ideas.filter(function(i){ return ideaForDate(i) !== today; })
                     .sort(function(a,b){ return ideaForDate(b).localeCompare(ideaForDate(a)); });
@@ -2883,7 +2888,7 @@ async function renderCompanyIdeas(co){
     : '';
 
   w.innerHTML =
-    card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()), genBtn) + body +
+    card(hdr('bi-stars', hdrTitle(today), genBtn) + body +
       '<div id="coIdeaErr" style="display:none;padding:10px 16px;font-size:12px;color:#b91c1c;background:#fef2f2"></div>') +
     prevBlock;
 
