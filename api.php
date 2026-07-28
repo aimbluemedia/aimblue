@@ -698,13 +698,17 @@ try {
                 if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
 
                 // One idea per company per day. If today's is already there,
-                // hand it back instead of spending another API call.
-                $day = date('Y-m-d');
+                // hand it back instead of spending another API call — unless
+                // the caller explicitly asked to replace it, in which case the
+                // old row goes so the day still ends up with exactly one.
+                $day     = date('Y-m-d');
+                $replace = !empty($body['replace']);
                 $have = $pdo->prepare("SELECT * FROM content_ideas
                                        WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?
                                        ORDER BY created_at DESC LIMIT 1");
                 $have->execute([$co_id, $day]);
-                if ($existing = $have->fetch()) {
+                $existing = $have->fetch();
+                if ($existing && !$replace) {
                     $existing['existing'] = true;
                     json_ok($existing);
                 }
@@ -722,40 +726,61 @@ try {
                 $prev->execute([$co_id]);
                 $previous = $prev->fetchAll(PDO::FETCH_COLUMN);
 
-                // The idea becomes the post TITLE, so it must read like a
-                // headline — not a description of what to post.
-                $system = "You are a social media content strategist. Generate exactly ONE post title "
-                        . "for the company described by the user.\n\n"
+                // The idea IS the post title, so it must read like a headline —
+                // never a description or instruction of what to post.
+                $system = "You write post titles. Output exactly ONE headline for the company "
+                        . "described by the user — the exact words the post will be published under.\n\n"
+                        . "GOOD (this is the target style):\n"
+                        . "How Small Businesses Can Turn Online Visibility Into Qualified Local Leads\n"
+                        . "Why Local Reviews Outperform Paid Ads For Neighborhood Service Businesses\n"
+                        . "The Hidden Cost Of Ignoring Your Google Business Profile\n\n"
+                        . "BAD (never write anything shaped like these):\n"
+                        . "Post a carousel showing a client's before and after results\n"
+                        . "Share a behind-the-scenes photo of the team prepping an order\n"
+                        . "Film a 30-second reel answering a common customer question\n"
+                        . "Create a poll asking followers about their biggest challenge\n\n"
                         . "Rules:\n"
-                        . "- Write it as a finished headline the post will actually be published under, "
-                        . "e.g. \"How Small Businesses Can Turn Online Visibility Into Qualified Local Leads\".\n"
+                        . "- NEVER begin with a verb telling someone what to do (Post, Share, Film, Create, "
+                        . "Show, Make, Take, Highlight, Feature, Ask, Run, Try, Write, Publish, Record, "
+                        . "Showcase, Announce, Launch, Give, Offer, Tell, Explain, Remind, Invite, Use…).\n"
+                        . "- Never mention the format or the act of posting (no carousel, reel, photo, video, "
+                        . "poll, caption, story, hashtag, followers, post).\n"
+                        . "- Describe the SUBJECT, not the activity. Headlines usually open with How, Why, "
+                        . "What, When, The, Your, a number, or a noun phrase.\n"
                         . "- Title Case. Roughly 8 to 16 words. One line.\n"
-                        . "- Do NOT describe the post or give instructions (no \"Share a photo of…\", "
-                        . "no \"Post a carousel showing…\"). The title itself is the whole output.\n"
-                        . "- It must be clearly different from every previous title listed.\n"
-                        . "- Return ONLY the title — no numbering, no quotes, no trailing period, no preamble.";
+                        . "- Clearly different in wording and topic from every previous title listed.\n"
+                        . "- Return ONLY the headline — no numbering, no quotes, no trailing period, no preamble.";
                 $userMsg = "Company: " . $company['name'] . "\n\n"
                          . "Content brief for this company:\n"
                          . (trim((string)$company['content_prompt']) !== ''
                              ? $company['content_prompt']
                              : "(No brief set — assume a general small-business social media presence.)")
-                         . "\n\nPrevious titles (do NOT repeat or closely resemble these):\n"
+                         . "\n\nAlready used — pick a different topic. These are listed only so you avoid "
+                         . "repeating them; some are older entries written in the wrong style, so do NOT "
+                         . "copy their phrasing:\n"
                          . ($previous ? "- " . implode("\n- ", $previous) : "(none yet)")
-                         . "\n\nGenerate one new post title.";
+                         . "\n\nWrite one new headline.";
 
-                $ideaText = claude_generate($apiKey, $system, $userMsg);
-                // Strip anything the model may still wrap around the title.
-                // Every step is unicode-safe and keeps the previous value if a
-                // pattern fails — byte-level trim() would split a multibyte
-                // dash or curly quote and blank the whole idea.
-                $clean = function ($s, $pattern, $replace = '') {
-                    $out = preg_replace($pattern, $replace, $s);
-                    return ($out === null || trim($out) === '') ? $s : $out;
-                };
-                $ideaText = trim($clean($ideaText, '/\s+/', ' '));
-                $ideaText = trim($clean($ideaText, '/^(?:\d+[\.\)]|[-–—•])\s*/u'));
-                $ideaText = trim($clean($ideaText, '/^["\'“”‘’]+|["\'“”‘’]+$/u'));
-                $ideaText = rtrim($ideaText, '.') ?: $ideaText;
+                // Belt and braces: if the model still returns an instruction,
+                // tell it what it did wrong and ask again. The prompt alone is
+                // not a guarantee, so this is enforced rather than hoped for.
+                $ideaText = '';
+                $retryNote = '';
+                for ($try = 0; $try < 3; $try++) {
+                    $ideaText = cb_clean_idea(claude_generate($apiKey, $system, $userMsg . $retryNote));
+                    if ($ideaText !== '' && !cb_is_instruction($ideaText)) break;
+                    $retryNote = "\n\nYour previous answer was \"" . $ideaText . "\". That is an instruction "
+                               . "describing what to post, not a headline. Rewrite it as the published title "
+                               . "itself, in the style of the GOOD examples.";
+                }
+
+                // Replacing: drop today's rows only now that the new title is
+                // in hand, so a failed API call never loses the existing idea.
+                if ($replace) {
+                    $pdo->prepare("DELETE FROM content_ideas
+                                   WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?")
+                        ->execute([$co_id, $day]);
+                }
 
                 $id = uid();
                 $pdo->prepare("INSERT INTO content_ideas (id, company_id, idea, idea_date) VALUES (?,?,?,?)")
@@ -885,6 +910,37 @@ function ensure_content_ideas($pdo) {
     } catch (Throwable $e) {
         error_log('[Content Board API] content_ideas migration failed: ' . $e->getMessage());
     }
+}
+
+// Strips list markers, wrapping quotes and a trailing period from a generated
+// title. Every step is unicode-safe and keeps the previous value if a pattern
+// fails — a byte-level trim() would split a multibyte dash or curly quote,
+// leaving invalid UTF-8 that makes the next /u pattern return null.
+function cb_clean_idea($text) {
+    $step = function ($s, $pattern, $replace = '') {
+        $out = preg_replace($pattern, $replace, $s);
+        return ($out === null || trim($out) === '') ? $s : $out;
+    };
+    $text = trim($step((string)$text, '/\s+/', ' '));
+    $text = trim($step($text, '/^(?:\d+[\.\)]|[-–—•])\s*/u'));
+    $text = trim($step($text, '/^["\'“”‘’]+|["\'“”‘’]+$/u'));
+    return rtrim($text, '.') ?: $text;
+}
+
+// True when a generated "title" is really an instruction describing what to
+// post ("Post a carousel showing…", "Share a photo of…") rather than the
+// headline the post gets published under.
+function cb_is_instruction($text) {
+    $verbs = 'post|share|film|create|show|make|take|highlight|feature|ask|run|try|write|publish'
+           . '|record|snap|showcase|spotlight|announce|launch|start|give|offer|tell|explain'
+           . '|remind|invite|encourage|celebrate|introduce|demonstrate|compare|list|do|use'
+           . '|put|send|upload|repost|tease|drop|add|capture|design|build|host|shoot';
+    // Opens with an imperative verb — requires a following space so real
+    // headline words ("Post-Pandemic…", "Listing…") are not caught.
+    if (preg_match('/^(?:' . $verbs . ')\s/i', $text)) return true;
+    // Talks about the mechanics of posting rather than the subject matter.
+    if (preg_match('/\b(?:carousel|reel|selfie|hashtags?|caption|followers|behind[- ]the[- ]scenes)\b/i', $text)) return true;
+    return false;
 }
 
 function get_setting($pdo, $key) {

@@ -127,12 +127,26 @@ All return `{ok: bool, data: any}` or `{ok: false, error: string}`.
 
 Content Ideas: **one idea per company per calendar day**. The "Generate
 Content Idea" button lives on the **company post page** (admin+CM), in a
-panel between the platform cards and the posts list. It generates today's
-single idea for that company; once today's idea exists the button is
-replaced by the idea itself, and previous ideas for that company list
-below it. Opening Add Post auto-fills the title with that company's idea
-for today (a note appears under the title field); the idea is marked used
-when the post is saved. The dashboard carries no content-idea UI.
+panel between the platform cards and the posts list, headed "Content idea
+for today: M/D/YYYY". Previous ideas for that company list below it.
+Opening Add Post auto-fills the title with that company's idea for today
+(a note appears under the title field); the idea is marked used when the
+post is saved. The dashboard carries no content-idea UI.
+
+The button is always available. With no idea for today it generates one;
+with one already there it asks to confirm and posts `replace: 1`, which
+regenerates and swaps the row so the day still holds exactly one idea.
+The old row is deleted only *after* the new title comes back, so a failed
+API call never loses the existing idea.
+
+**The idea IS the post title** — a headline like "How Small Businesses Can
+Turn Online Visibility Into Qualified Local Leads", never an instruction
+("Post a carousel showing…"). Enforced in three layers: the prompt carries
+good/bad examples and bans format words; `cb_is_instruction()` detects
+imperative openers and posting-mechanics words; `generate_idea` retries up
+to 3 times, telling the model what was wrong. `cb_clean_idea()` strips list
+markers, quotes and trailing periods — unicode-safe, since a byte-level
+trim splits multibyte dashes and blanks the whole idea.
 
 `generate_idea` enforces the one-per-day rule server-side: if an idea
 already exists for that company today it returns it with `existing: true`
