@@ -212,6 +212,15 @@ content_prompt all self-migrate on first use.
 - [ ] Email notifications for overdue posts
 - [ ] CSV/PDF export of posts
 
+### Application timezone
+Hostinger runs PHP in UTC, which rolls the date over mid-evening in US
+timezones — "today" for content ideas then disagreed with the browser's day.
+`config.php` pins `CB_TIMEZONE` (currently `America/Los_Angeles`) and calls
+`date_default_timezone_set()` before anything else; config.php is included by
+auth.php and therefore by every entry point. Change that one line to move the
+business day. The content idea panel takes its date from the SERVER
+(`daily_ideas` returns `today`) so the two can never drift apart again.
+
 ## Environment
 - PHP 8.3 on Hostinger shared hosting
 - MySQL — database: u312278121_wpi

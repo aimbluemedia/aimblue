@@ -6,6 +6,14 @@
 define('CB_VERSION', '1.0.0');
 define('CONFIG_FILE', __DIR__ . '/db.config.php');
 
+// Hostinger runs PHP in UTC, which rolls the date over mid-evening in US
+// timezones — "today" for content ideas and posts then disagrees with the
+// browser's day. Pinning the app timezone keeps every date the same day the
+// user is actually having. Change this one line to move the business day.
+// Valid names: https://www.php.net/manual/en/timezones.php
+if (!defined('CB_TIMEZONE')) define('CB_TIMEZONE', 'America/Los_Angeles');
+date_default_timezone_set(CB_TIMEZONE);
+
 // Load saved config if exists
 if (file_exists(CONFIG_FILE)) {
     require_once CONFIG_FILE;

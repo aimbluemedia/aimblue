@@ -2843,7 +2843,10 @@ async function renderCompanyIdeas(co){
   var still = getCo();
   if (!still || still.id !== co.id) return;
   var todays = ideas.filter(function(i){ return ideaForDate(i) === today; });
-  var prev   = ideas.filter(function(i){ return ideaForDate(i) !== today; })
+  // Strictly earlier than today — an idea dated ahead of today is not
+  // "previous". Rows stamped by an earlier UTC server can be a day ahead;
+  // they simply surface as today's idea when their date arrives.
+  var prev   = ideas.filter(function(i){ return ideaForDate(i) < today; })
                     .sort(function(a,b){ return ideaForDate(b).localeCompare(ideaForDate(a)); });
 
   function ideaRow(i, showDate){
