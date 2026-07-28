@@ -984,6 +984,12 @@ function todayStr(){
   var t = new Date();
   return t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
 }
+// 'YYYY-MM-DD' → 'M/D/YYYY' for display (parsed as local, never UTC)
+function fmtDateUS(ymd){
+  var p = String(ymd||'').split('-');
+  if (p.length !== 3) return String(ymd||'');
+  return Number(p[1])+'/'+Number(p[2])+'/'+p[0];
+}
 function getCo(){return db.companies.find(c=>c.id===activeId);}
 function pct(n,t){return t?Math.round(n/t*100):0;}
 
@@ -2815,13 +2821,13 @@ async function renderCompanyIdeas(co){
       (right||'')+'</div>';
   };
 
-  w.innerHTML = card(hdr('bi-stars','Content idea for today','') +
+  w.innerHTML = card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()),'') +
     '<div style="padding:16px;color:#94a3b8;font-size:13px">Loading ideas…</div>');
 
   var ideas;
   try { ideas = await apiCall('content_ideas', {id: co.id}); }
   catch(e){
-    w.innerHTML = card(hdr('bi-stars','Content idea for today','') +
+    w.innerHTML = card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()),'') +
       '<div style="padding:16px;color:#b91c1c;font-size:13px">Could not load content ideas: '+esc(e.message||String(e))+'</div>');
     return;
   }
@@ -2841,7 +2847,7 @@ async function renderCompanyIdeas(co){
       '<div style="flex:1;min-width:0">'+
         (showDate || i.used_at
           ? '<div style="font-size:11px;font-weight:700;color:#64748b">'+
-              (showDate ? esc(ideaForDate(i)) : '')+
+              (showDate ? esc(fmtDateUS(ideaForDate(i))) : '')+
               (i.used_at ? (showDate?' · ':'')+'<span style="color:#16a34a">used</span>' : '')+
             '</div>'
           : '')+
@@ -2873,7 +2879,7 @@ async function renderCompanyIdeas(co){
     : '';
 
   w.innerHTML =
-    card(hdr('bi-stars','Content idea for today', genBtn) + body +
+    card(hdr('bi-stars','Content idea for today: ' + fmtDateUS(todayStr()), genBtn) + body +
       '<div id="coIdeaErr" style="display:none;padding:10px 16px;font-size:12px;color:#b91c1c;background:#fef2f2"></div>') +
     prevBlock;
 

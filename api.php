@@ -722,21 +722,40 @@ try {
                 $prev->execute([$co_id]);
                 $previous = $prev->fetchAll(PDO::FETCH_COLUMN);
 
-                $system = "You are a social media content strategist. Generate exactly ONE new content idea "
-                        . "for the company described by the user: a short, specific, actionable post concept "
-                        . "(one to three sentences) that a content manager can create today. It must be clearly "
-                        . "different from every previous idea listed. Return ONLY the idea text — no numbering, "
-                        . "no quotes, no preamble.";
+                // The idea becomes the post TITLE, so it must read like a
+                // headline — not a description of what to post.
+                $system = "You are a social media content strategist. Generate exactly ONE post title "
+                        . "for the company described by the user.\n\n"
+                        . "Rules:\n"
+                        . "- Write it as a finished headline the post will actually be published under, "
+                        . "e.g. \"How Small Businesses Can Turn Online Visibility Into Qualified Local Leads\".\n"
+                        . "- Title Case. Roughly 8 to 16 words. One line.\n"
+                        . "- Do NOT describe the post or give instructions (no \"Share a photo of…\", "
+                        . "no \"Post a carousel showing…\"). The title itself is the whole output.\n"
+                        . "- It must be clearly different from every previous title listed.\n"
+                        . "- Return ONLY the title — no numbering, no quotes, no trailing period, no preamble.";
                 $userMsg = "Company: " . $company['name'] . "\n\n"
                          . "Content brief for this company:\n"
                          . (trim((string)$company['content_prompt']) !== ''
                              ? $company['content_prompt']
                              : "(No brief set — assume a general small-business social media presence.)")
-                         . "\n\nPrevious ideas (do NOT repeat or closely resemble these):\n"
+                         . "\n\nPrevious titles (do NOT repeat or closely resemble these):\n"
                          . ($previous ? "- " . implode("\n- ", $previous) : "(none yet)")
-                         . "\n\nGenerate one new idea.";
+                         . "\n\nGenerate one new post title.";
 
                 $ideaText = claude_generate($apiKey, $system, $userMsg);
+                // Strip anything the model may still wrap around the title.
+                // Every step is unicode-safe and keeps the previous value if a
+                // pattern fails — byte-level trim() would split a multibyte
+                // dash or curly quote and blank the whole idea.
+                $clean = function ($s, $pattern, $replace = '') {
+                    $out = preg_replace($pattern, $replace, $s);
+                    return ($out === null || trim($out) === '') ? $s : $out;
+                };
+                $ideaText = trim($clean($ideaText, '/\s+/', ' '));
+                $ideaText = trim($clean($ideaText, '/^(?:\d+[\.\)]|[-–—•])\s*/u'));
+                $ideaText = trim($clean($ideaText, '/^["\'“”‘’]+|["\'“”‘’]+$/u'));
+                $ideaText = rtrim($ideaText, '.') ?: $ideaText;
 
                 $id = uid();
                 $pdo->prepare("INSERT INTO content_ideas (id, company_id, idea, idea_date) VALUES (?,?,?,?)")
