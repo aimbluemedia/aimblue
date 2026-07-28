@@ -2859,16 +2859,19 @@ async function renderCompanyIdeas(co){
     '</div>';
   }
 
+  var has = todays.length > 0;
   var genBtn =
     '<button class="btn" id="btnGenCoIdea" '+
+    (has ? 'title="Not a good headline? Generate a different one — it replaces today\'s idea." ' : '')+
     'style="background:linear-gradient(135deg,#6c47ff,#9333ea);color:#fff;font-weight:700;font-size:13px;padding:8px 16px;border-radius:9px;border:none;box-shadow:0 4px 14px rgba(108,71,255,.35);white-space:nowrap">'+
-    '<i class="bi bi-stars me-2"></i>Generate Content Idea</button>';
+    (has ? '<i class="bi bi-arrow-repeat me-2"></i>Regenerate Idea'
+         : '<i class="bi bi-stars me-2"></i>Generate Content Idea')+'</button>';
 
-  var body = todays.length
+  var body = has
     ? todays.map(function(i){ return ideaRow(i, false); }).join('')+
-      '<div style="padding:10px 16px;font-size:12px;color:#16a34a;background:#f0fdf4">'+
-        'Today&rsquo;s idea is ready — one idea per company per day. '+
-        'Generating again replaces it.</div>'
+      '<div style="padding:10px 16px;font-size:12px;color:#64748b;background:#f8fafc">'+
+        'Not a strong headline? Press <strong>Regenerate Idea</strong> for a different one — '+
+        'the rejected headline will not come back.</div>'
     : '<div style="padding:16px;color:#94a3b8;font-size:13px">'+
         'No idea for today yet — press <strong>Generate Content Idea</strong> to create one for '+esc(co.name)+'.</div>';
 
@@ -2896,12 +2899,10 @@ async function renderCompanyIdeas(co){
     };
   });
 
+  // One click, no confirm — retrying until the headline is good is the
+  // point, and the rejected one is kept out of future results anyway.
   var gb = document.getElementById('btnGenCoIdea');
-  if (gb) gb.onclick = function(){
-    // Today already has one — generating again replaces it, so confirm first
-    if (todays.length && !confirm('Replace today’s content idea for ' + co.name + ' with a new one?')) return;
-    generateCompanyIdea(co.id, todays.length > 0);
-  };
+  if (gb) gb.onclick = function(){ generateCompanyIdea(co.id, has); };
 }
 
 // Generates today's single idea for one company.
@@ -2911,7 +2912,7 @@ async function generateCompanyIdea(coId, replace){
   if (err) err.style.display = 'none';
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>Generating…';
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>'+(replace ? 'Regenerating…' : 'Generating…');
   }
   try {
     await apiCall('generate_idea', {method:'POST', body:{company_id: coId, replace: replace ? 1 : 0}});
@@ -2919,7 +2920,12 @@ async function generateCompanyIdea(coId, replace){
     var co = (db.companies||[]).find(function(c){ return c.id === coId; });
     await renderCompanyIdeas(co || getCo());
   } catch(e){
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stars me-2"></i>Generate Content Idea'; }
+    // Restore the label the button had before this attempt
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = replace ? '<i class="bi bi-arrow-repeat me-2"></i>Regenerate Idea'
+                              : '<i class="bi bi-stars me-2"></i>Generate Content Idea';
+    }
     var e2 = document.getElementById('coIdeaErr');
     if (e2) { e2.textContent = e.message || String(e); e2.style.display = ''; }
   }

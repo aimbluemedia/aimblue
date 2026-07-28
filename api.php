@@ -656,7 +656,8 @@ try {
                 if (!$co_id) json_error('company_id required', 422);
                 $filter = user_company_filter();
                 if ($filter !== null && !in_array($co_id, $filter)) json_error('Forbidden', 403);
-                $stmt = $pdo->prepare("SELECT * FROM content_ideas WHERE company_id = ?
+                $stmt = $pdo->prepare("SELECT * FROM content_ideas
+                                       WHERE company_id = ? AND discarded_at IS NULL
                                        ORDER BY COALESCE(used_at, created_at) DESC, created_at DESC");
                 $stmt->execute([$co_id]);
                 json_ok($stmt->fetchAll());
@@ -674,10 +675,11 @@ try {
                 $sql = "SELECT ci.*, COALESCE(ci.idea_date, DATE(ci.created_at)) AS for_date,
                                c.name AS company_name, c.color AS company_color
                         FROM content_ideas ci
-                        JOIN companies c ON c.id = ci.company_id";
+                        JOIN companies c ON c.id = ci.company_id
+                        WHERE ci.discarded_at IS NULL";
                 $params = [];
                 if ($filter !== null) {
-                    $sql .= " WHERE ci.company_id IN (" . implode(',', array_fill(0, count($filter), '?')) . ")";
+                    $sql .= " AND ci.company_id IN (" . implode(',', array_fill(0, count($filter), '?')) . ")";
                     $params = array_values($filter);
                 }
                 $sql .= " ORDER BY for_date DESC, ci.created_at DESC LIMIT 80";
@@ -705,6 +707,7 @@ try {
                 $replace = !empty($body['replace']);
                 $have = $pdo->prepare("SELECT * FROM content_ideas
                                        WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?
+                                         AND discarded_at IS NULL
                                        ORDER BY created_at DESC LIMIT 1");
                 $have->execute([$co_id, $day]);
                 $existing = $have->fetch();
@@ -722,6 +725,8 @@ try {
                 $apiKey = $keyEnc ? decrypt_pw($keyEnc) : '';
                 if (!$apiKey) json_error('No Claude API key configured. An admin can add one under API settings.', 422);
 
+                // Deliberately includes discarded rows: a regenerate must not
+                // return a near-copy of the headline just rejected.
                 $prev = $pdo->prepare("SELECT idea FROM content_ideas WHERE company_id = ? ORDER BY created_at DESC LIMIT 100");
                 $prev->execute([$co_id]);
                 $previous = $prev->fetchAll(PDO::FETCH_COLUMN);
@@ -774,11 +779,13 @@ try {
                                . "itself, in the style of the GOOD examples.";
                 }
 
-                // Replacing: drop today's rows only now that the new title is
-                // in hand, so a failed API call never loses the existing idea.
+                // Replacing: discard today's rows only now that the new title
+                // is in hand, so a failed API call never loses the existing
+                // idea. Discarded rows stay for the "do not repeat" prompt.
                 if ($replace) {
-                    $pdo->prepare("DELETE FROM content_ideas
-                                   WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?")
+                    $pdo->prepare("UPDATE content_ideas SET discarded_at = NOW()
+                                   WHERE company_id = ? AND COALESCE(idea_date, DATE(created_at)) = ?
+                                     AND discarded_at IS NULL")
                         ->execute([$co_id, $day]);
                 }
 
@@ -906,6 +913,12 @@ function ensure_content_ideas($pdo) {
             $pdo->exec("ALTER TABLE content_ideas ADD COLUMN idea_date DATE DEFAULT NULL");
             $pdo->exec("UPDATE content_ideas SET idea_date = DATE(created_at) WHERE idea_date IS NULL");
             $pdo->exec("CREATE INDEX idx_ci_company_date ON content_ideas (company_id, idea_date)");
+        }
+        // Regenerating discards the old headline rather than deleting it: it
+        // stays out of every list but still feeds the "do not repeat" prompt,
+        // so a retry cannot hand back the idea just rejected.
+        if (!$pdo->query("SHOW COLUMNS FROM content_ideas LIKE 'discarded_at'")->fetch()) {
+            $pdo->exec("ALTER TABLE content_ideas ADD COLUMN discarded_at DATETIME DEFAULT NULL");
         }
     } catch (Throwable $e) {
         error_log('[Content Board API] content_ideas migration failed: ' . $e->getMessage());

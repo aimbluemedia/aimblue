@@ -133,11 +133,18 @@ Opening Add Post auto-fills the title with that company's idea for today
 (a note appears under the title field); the idea is marked used when the
 post is saved. The dashboard carries no content-idea UI.
 
-The button is always available. With no idea for today it generates one;
-with one already there it asks to confirm and posts `replace: 1`, which
-regenerates and swaps the row so the day still holds exactly one idea.
-The old row is deleted only *after* the new title comes back, so a failed
-API call never loses the existing idea.
+The button is always available. With no idea for today it reads "Generate
+Content Idea"; once today has one it becomes **"Regenerate Idea"** — one
+click, no confirm, so a weak headline can be retried until it is right.
+Regenerating posts `replace: 1`, which swaps the row so the day still
+holds exactly one idea.
+
+Rejected headlines are **discarded, not deleted** (`content_ideas.discarded_at`,
+self-migrating). Discarded rows are filtered out of `content_ideas` and
+`daily_ideas` so they vanish from the UI, but they still feed the
+"do not repeat" prompt — otherwise a regenerate could hand back the very
+headline just rejected. The discard happens only *after* the new title
+comes back, so a failed API call never loses the existing idea.
 
 **The idea IS the post title** — a headline like "How Small Businesses Can
 Turn Online Visibility Into Qualified Local Leads", never an instruction
